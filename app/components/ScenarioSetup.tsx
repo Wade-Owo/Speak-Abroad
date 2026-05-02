@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import type { Scenario } from "../data/scenarios";
 import { OptionButton } from "./OptionButton";
@@ -15,6 +16,25 @@ export function ScenarioSetup({ scenario }: { scenario: Scenario }) {
   return (
     <>
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xl shadow-blue-950/5 sm:p-8">
+        <Link
+          href="/home"
+          className="mb-6 inline-flex items-center gap-2 text-sm font-semibold text-slate-500 transition hover:text-blue-700"
+        >
+          <svg
+            aria-hidden="true"
+            className="h-4 w-4"
+            fill="none"
+            stroke="currentColor"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="2.5"
+            viewBox="0 0 24 24"
+          >
+            <path d="M19 12H5" />
+            <path d="m11 18-6-6 6-6" />
+          </svg>
+          Back to Scenarios
+        </Link>
         <p className="text-sm font-semibold uppercase tracking-[0.18em] text-blue-600">
           Practice Setup
         </p>

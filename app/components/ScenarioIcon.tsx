@@ -42,10 +42,10 @@ const iconPaths: Record<Scenario["iconName"], ReactNode> = {
   ),
   classmate: (
     <>
-      <path d="M16 11a4 4 0 1 0-8 0" />
-      <path d="M5 21a7 7 0 0 1 14 0" />
-      <path d="M19 8v6" />
-      <path d="M22 11h-6" />
+      <circle cx="9" cy="8" r="3" />
+      <path d="M3.5 19a5.5 5.5 0 0 1 11 0" />
+      <circle cx="17" cy="9" r="2.5" />
+      <path d="M14.5 15.5a4.5 4.5 0 0 1 6 3.5" />
     </>
   ),
   doctor: (

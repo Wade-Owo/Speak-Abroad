@@ -37,7 +37,19 @@ export function ScenarioCard({ scenario }: { scenario: Scenario }) {
       </div>
       <div className="mt-6 flex items-center justify-between text-sm font-semibold text-blue-700">
         <span>Start</span>
-        <span className="transition group-hover:translate-x-1">-&gt;</span>
+        <svg
+          aria-hidden="true"
+          className="h-5 w-5 transition group-hover:translate-x-1"
+          fill="none"
+          stroke="currentColor"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth="2.5"
+          viewBox="0 0 24 24"
+        >
+          <path d="M5 12h14" />
+          <path d="m13 6 6 6-6 6" />
+        </svg>
       </div>
     </Link>
   );
