@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { LiveKitRoom, RoomAudioRenderer, VoiceAssistantControlBar } from "@livekit/components-react";
+import "@livekit/components-styles";
 import type { Scenario } from "../data/scenarios";
 import { OptionButton } from "./OptionButton";
 
@@ -11,11 +13,20 @@ const personalityOptions = ["Friendly", "Neutral", "Rushed", "Impatient"];
 export function ScenarioSetup({ scenario }: { scenario: Scenario }) {
   const [pressure, setPressure] = useState("Normal");
   const [personality, setPersonality] = useState("Friendly");
-  const [isStarting, setIsStarting] = useState(false);
+  const [token, setToken] = useState<string | null>(null);
+
+  const startLiveKitSession = async () => {
+    // Fetch the token with the selected parameters
+    const res = await fetch(`/api/livekit?room=${scenario.id}&pressure=${pressure}&personality=${personality}`);
+    const data = await res.json();
+    setToken(data.token);
+  };
 
   return (
     <>
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xl shadow-blue-950/5 sm:p-8">
+        
+        {/* TEAMMATE'S NEW BACK BUTTON */}
         <Link
           href="/home"
           className="mb-6 inline-flex items-center gap-2 text-sm font-semibold text-slate-500 transition hover:text-blue-700"
@@ -35,6 +46,7 @@ export function ScenarioSetup({ scenario }: { scenario: Scenario }) {
           </svg>
           Back to Scenarios
         </Link>
+
         <p className="text-sm font-semibold uppercase tracking-[0.18em] text-blue-600">
           Practice Setup
         </p>
@@ -84,32 +96,34 @@ export function ScenarioSetup({ scenario }: { scenario: Scenario }) {
 
         <button
           type="button"
-          onClick={() => setIsStarting(true)}
+          onClick={startLiveKitSession}
           className="mt-8 flex w-full items-center justify-center rounded-2xl bg-blue-600 px-6 py-4 text-base font-bold text-white shadow-lg shadow-blue-600/25 transition hover:bg-blue-700"
         >
           Start Scenario
         </button>
       </section>
 
-      {isStarting ? (
+      {/* YOUR LIVEKIT MODAL LOGIC */}
+      {token ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-blue-950/40 p-5 backdrop-blur-sm">
           <div className="w-full max-w-md rounded-2xl bg-white p-7 text-center shadow-2xl">
-            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-blue-50 text-blue-600">
-              <span className="h-3 w-3 animate-ping rounded-full bg-blue-600" />
-            </div>
-            <h2 className="mt-5 text-2xl font-bold text-blue-950">
-              AI Coach Starting...
-            </h2>
-            <p className="mt-3 leading-7 text-slate-500">
-              This is where the live voice roleplay will begin.
-            </p>
-            <button
-              type="button"
-              onClick={() => setIsStarting(false)}
-              className="mt-6 rounded-full border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+            <LiveKitRoom
+              serverUrl={process.env.NEXT_PUBLIC_LIVEKIT_URL}
+              token={token}
+              connect={true}
+              audio={true}
+              onDisconnected={() => setToken(null)}
             >
-              Close
-            </button>
+              <h2 className="text-2xl font-bold text-blue-950 mb-2">Live Practice</h2>
+              <p className="mb-6 text-slate-500">
+                {personality} AI • {pressure} Pressure
+              </p>
+
+              {/* Renders the visualizer and mute/disconnect buttons */}
+              <VoiceAssistantControlBar />
+              <RoomAudioRenderer />
+              
+            </LiveKitRoom>
           </div>
         </div>
       ) : null}
