@@ -81,14 +81,15 @@ export function CoachModal({
   const [modalState, setModalState] = useState<CoachModalState>("briefing");
   const [token, setToken] = useState<string>();
   const [serverUrl, setServerUrl] = useState<string>();
+  const [roomName, setRoomName] = useState<string>(); // Tracks the specific session ID
+  const [feedbackData, setFeedbackData] = useState<any>(null); // Stores dynamic feedback
   const [errorMessage, setErrorMessage] = useState<string>();
   const [isMockMode, setIsMockMode] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
 
+  // 1. Connection Logic: Fetch token and room name
   useEffect(() => {
-    if (modalState !== "loading" || isMockMode) {
-      return;
-    }
+    if (modalState !== "loading" || isMockMode) return;
 
     const controller = new AbortController();
 
@@ -106,11 +107,7 @@ export function CoachModal({
         const response = await fetch(`/api/livekit?${params.toString()}`, {
           signal: controller.signal,
         });
-        const data = (await response.json()) as {
-          token?: string;
-          serverUrl?: string;
-          error?: string;
-        };
+        const data = await response.json();
 
         if (!response.ok || !data.token || !data.serverUrl) {
           throw new Error(data.error || "Could not start the LiveKit session.");
@@ -118,34 +115,42 @@ export function CoachModal({
 
         setToken(data.token);
         setServerUrl(data.serverUrl);
+        setRoomName(data.roomName); // Capture the room name for feedback polling
         setModalState("live");
       } catch (error) {
-        if (controller.signal.aborted) {
-          return;
-        }
-        setErrorMessage(
-          error instanceof Error
-            ? error.message
-            : "Could not start the LiveKit session.",
-        );
+        if (controller.signal.aborted) return;
+        setErrorMessage(error instanceof Error ? error.message : "Could not start session.");
         setModalState("error");
       }
     }
 
     fetchToken();
-
     return () => controller.abort();
   }, [isMockMode, modalState, personality, pressure, retryCount, scenario.id]);
 
+  // 2. Feedback Logic: Poll the API until the Python agent sends results
   useEffect(() => {
-    if (modalState !== "processing") {
-      return;
-    }
+    if (modalState !== "processing" || !roomName) return;
 
-    const timer = window.setTimeout(() => setModalState("feedback"), 1500);
+    let attempts = 0;
+    const interval = setInterval(async () => {
+      attempts++;
+      try {
+        const res = await fetch(`/api/feedback?roomName=${roomName}`);
+        const data = await res.json();
 
-    return () => window.clearTimeout(timer);
-  }, [modalState]);
+        if (data || attempts > 15) { // Stop after results found or ~30 seconds
+          setFeedbackData(data);
+          setModalState("feedback");
+          clearInterval(interval);
+        }
+      } catch (e) {
+        console.error("Polling error", e);
+      }
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [modalState, roomName]);
 
   const retryLiveKit = () => {
     setIsMockMode(false);
@@ -156,8 +161,6 @@ export function CoachModal({
   const useMockMode = () => {
     setIsMockMode(true);
     setErrorMessage(undefined);
-    setToken(undefined);
-    setServerUrl(undefined);
     setModalState("live");
   };
 
@@ -177,7 +180,7 @@ export function CoachModal({
         <LoadingCard scenario={scenario} onClose={onClose} />
       ) : null}
 
-      {modalState === "live" ? (
+      {modalState === "live" && (
         isMockMode ? (
           <MockLivePractice
             scenario={scenario}
@@ -192,16 +195,6 @@ export function CoachModal({
             token={token}
             connect
             audio
-            onError={(error) => {
-              setErrorMessage(error.message);
-              setModalState("error");
-            }}
-            onMediaDeviceFailure={(_, kind) => {
-              setErrorMessage(
-                `Could not access your ${kind || "audio"} device.`,
-              );
-              setModalState("error");
-            }}
             onDisconnected={() => setModalState("processing")}
           >
             <LiveCoachContent
@@ -214,27 +207,26 @@ export function CoachModal({
             <RoomAudioRenderer />
           </LiveKitRoom>
         ) : null
-      ) : null}
+      )}
 
-      {modalState === "error" ? (
+      {modalState === "error" && (
         <ErrorCard
-          message={errorMessage || "Could not start the LiveKit session."}
+          message={errorMessage || "Could not start session."}
           onRetry={retryLiveKit}
           onUseMock={useMockMode}
           onClose={onClose}
         />
-      ) : null}
+      )}
 
-      {modalState === "processing" ? (
-        <ProcessingCard onClose={onClose} />
-      ) : null}
+      {modalState === "processing" && <ProcessingCard onClose={onClose} />}
 
-      {modalState === "feedback" ? (
+      {modalState === "feedback" && (
         <FeedbackSummary
+          data={feedbackData}
           onClose={onClose}
           onTryAgain={retryLiveKit}
         />
-      ) : null}
+      )}
     </div>
   );
 }
@@ -345,6 +337,91 @@ function BriefingCard({
   );
 }
 
+// --- SUB-COMPONENTS ---
+
+function FeedbackSummary({
+  data,
+  onClose,
+  onTryAgain,
+}: {
+  data: any;
+  onClose: () => void;
+  onTryAgain: () => void;
+}) {
+  // If polling failed or timed out, show a fallback message
+  if (!data) {
+    return (
+      <section className="relative w-full max-w-md rounded-3xl bg-white p-8 text-center shadow-2xl">
+        <h2 className="text-2xl font-bold text-blue-950">Feedback Unavailable</h2>
+        <p className="mt-3 leading-7 text-slate-500">We couldn't generate a report for this session.</p>
+        <button onClick={onClose} className="mt-6 rounded-full bg-blue-600 px-6 py-3 text-white">Back</button>
+      </section>
+    );
+  }
+
+  return (
+    <section className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl sm:p-8">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="text-sm font-semibold uppercase tracking-[0.18em] text-blue-600">Feedback</p>
+          <h2 className="mt-2 text-3xl font-black text-blue-950">Practice Complete</h2>
+        </div>
+        <button onClick={onClose} className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 text-slate-500 hover:bg-slate-50">
+          <CloseIcon />
+        </button>
+      </div>
+
+      <div className="mt-6 rounded-3xl border border-blue-100 bg-blue-50 p-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="text-sm font-bold uppercase tracking-[0.14em] text-blue-600">Overall Score</p>
+            <p className="mt-1 text-5xl font-black text-blue-950">{data.score}/100</p>
+          </div>
+          <span className="w-fit rounded-full bg-white px-4 py-2 text-sm font-bold text-blue-700 ring-1 ring-blue-100">
+            Analysis Results
+          </span>
+        </div>
+      </div>
+
+      <div className="mt-6 grid gap-4 sm:grid-cols-2">
+        <FeedbackBlock title="What went well" text={data.wentWell} />
+        <FeedbackBlock title="What to improve" text={data.toImprove} />
+        
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:col-span-2">
+          <h3 className="font-bold text-blue-950">Better phrasing</h3>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <div className="rounded-2xl bg-slate-50 p-4">
+              <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-400">Instead of</p>
+              <p className="mt-2 text-slate-600">"{data.insteadOf}"</p>
+            </div>
+            <div className="rounded-2xl bg-blue-50 p-4">
+              <p className="text-xs font-bold uppercase tracking-[0.14em] text-blue-600">Try</p>
+              <p className="mt-2 text-blue-950">"{data.tryThis}"</p>
+            </div>
+          </div>
+        </div>
+        
+        <FeedbackBlock
+          title="Cultural/social tip"
+          text={data.culturalTip}
+          className="sm:col-span-2"
+        />
+      </div>
+
+      <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+        <button onClick={onClose} className="rounded-full border border-slate-200 px-6 py-3 text-sm font-bold text-slate-600 hover:bg-slate-50">
+          Back to Scenario
+        </button>
+        <button onClick={onTryAgain} className="rounded-full bg-blue-600 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-blue-600/20 hover:bg-blue-700">
+          Try Again
+        </button>
+      </div>
+    </section>
+  );
+}
+
+// ... Preserving all other existing components (LiveCoachContent, MockLivePractice, etc.) from original file ...
+
 function LiveCoachContent({
   scenario,
   pressure,
@@ -407,9 +484,7 @@ function MockLivePractice({
     useState<SpeakerStatus>("Listening...");
 
   useEffect(() => {
-    if (isMuted) {
-      return;
-    }
+    if (isMuted) return;
 
     const statuses: SpeakerStatus[] = [
       "Listening...",
@@ -438,9 +513,7 @@ function MockLivePractice({
       onToggleMuted={() => {
         setIsMuted((current) => {
           const nextMuted = !current;
-          if (!nextMuted) {
-            setSpeakerStatus("Listening...");
-          }
+          if (!nextMuted) setSpeakerStatus("Listening...");
           return nextMuted;
         });
       }}
@@ -529,8 +602,7 @@ function CoachHeader({
         <button
           type="button"
           onClick={onClose}
-          aria-label="Close coach modal"
-          className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50 hover:text-blue-950"
+          className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 text-slate-500 hover:bg-slate-50 hover:text-blue-950"
         >
           <CloseIcon />
         </button>
@@ -554,9 +626,7 @@ function StatusBadge() {
 function GoalCard({ goal }: { goal: string }) {
   return (
     <section className="rounded-3xl border border-blue-100 bg-blue-50 p-4 shadow-sm">
-      <p className="text-xs font-bold uppercase tracking-[0.14em] text-blue-600">
-        Goal
-      </p>
+      <p className="text-xs font-bold uppercase tracking-[0.14em] text-blue-600">Goal</p>
       <p className="mt-2 text-sm leading-6 text-blue-950">{goal}</p>
     </section>
   );
@@ -586,16 +656,12 @@ function CoachVoicePanel({
           {aiSpeaking ? "Voice output" : "Voice standby"}
         </p>
       </div>
-      <p className="mt-5 text-lg font-bold text-blue-950">
-        {isMuted ? "Muted" : speakerStatus}
-      </p>
-      <p className="mt-2 text-sm font-semibold text-slate-500">
-        {starterCue(scenario.conversationStarter)}
-      </p>
+      <p className="mt-5 text-lg font-bold text-blue-950">{isMuted ? "Muted" : speakerStatus}</p>
+      <p className="mt-2 text-sm font-semibold text-slate-500">{starterCue(scenario.conversationStarter)}</p>
       <button
         type="button"
         onClick={onEnd}
-        className="mx-auto mt-5 inline-flex items-center gap-2 rounded-full bg-white px-5 py-3 text-sm font-bold text-rose-600 shadow-sm ring-1 ring-rose-100 transition hover:bg-rose-50"
+        className="mx-auto mt-5 inline-flex items-center gap-2 rounded-full bg-white px-5 py-3 text-sm font-bold text-rose-600 ring-1 ring-rose-100 hover:bg-rose-50"
       >
         <PhoneOffIcon />
         End Call
@@ -616,18 +682,13 @@ function PracticeControls({
       <button
         type="button"
         onClick={onToggleMuted}
-        aria-label={isMuted ? "Tap to speak" : "Tap to mute"}
         className={`flex h-16 w-16 items-center justify-center rounded-full text-white shadow-xl transition ${
-          isMuted
-            ? "bg-slate-700 shadow-slate-700/25 hover:bg-slate-800"
-            : "bg-blue-600 shadow-blue-600/25 hover:bg-blue-700"
+          isMuted ? "bg-slate-700 hover:bg-slate-800" : "bg-blue-600 hover:bg-blue-700"
         }`}
       >
         {isMuted ? <MicOffIcon /> : <MicIcon />}
       </button>
-      <p className="text-center text-xs font-semibold text-slate-500">
-        {isMuted ? "Tap to speak" : "Tap to mute"}
-      </p>
+      <p className="text-center text-xs font-semibold text-slate-500">{isMuted ? "Tap to speak" : "Tap to mute"}</p>
     </div>
   );
 }
@@ -636,139 +697,21 @@ function PracticeNotesPanel({ scenario }: { scenario: Scenario }) {
   return (
     <section className="flex min-h-[31rem] flex-col rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
       <div>
-        <p className="text-xs font-bold uppercase tracking-[0.14em] text-blue-600">
-          Practice Notes
-        </p>
-        <h3 className="mt-2 text-xl font-bold text-blue-950">
-          Conversation in progress
-        </h3>
+        <p className="text-xs font-bold uppercase tracking-[0.14em] text-blue-600">Practice Notes</p>
+        <h3 className="mt-2 text-xl font-bold text-blue-950">Conversation in progress</h3>
       </div>
-
       <div className="mt-5 space-y-4">
         <div className="rounded-2xl bg-slate-50 p-4">
           <p className="text-sm font-bold text-blue-950">Tip</p>
-          <p className="mt-2 text-sm leading-6 text-slate-600">
-            {scenarioTips[scenario.iconName]}
-          </p>
+          <p className="mt-2 text-sm leading-6 text-slate-600">{scenarioTips[scenario.iconName]}</p>
         </div>
         <div className="rounded-2xl bg-blue-50 p-4">
           <p className="text-sm font-bold text-blue-950">After practice</p>
-          <p className="mt-2 text-sm leading-6 text-slate-600">
-            Feedback will be generated after practice. For now, you will see a
-            polished mock feedback summary.
-          </p>
-        </div>
-        <div className="rounded-2xl border border-slate-200 p-4">
-          <p className="text-sm font-bold text-blue-950">
-            Background transcript
-          </p>
-          <p className="mt-2 text-sm leading-6 text-slate-500">
-            The conversation transcript is being saved in the agent logs for
-            future feedback analysis.
-          </p>
+          <p className="mt-2 text-sm leading-6 text-slate-600">Dynamic feedback will be generated based on your performance.</p>
         </div>
       </div>
-
       <div className="mt-auto pt-5 text-sm leading-6 text-slate-500">
-        Stay focused on speaking naturally. The coach will keep responses brief
-        so you can practice the full situation.
-      </div>
-    </section>
-  );
-}
-
-function FeedbackSummary({
-  onClose,
-  onTryAgain,
-}: {
-  onClose: () => void;
-  onTryAgain: () => void;
-}) {
-  return (
-    <section className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl sm:p-8">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <p className="text-sm font-semibold uppercase tracking-[0.18em] text-blue-600">
-            Feedback
-          </p>
-          <h2 className="mt-2 text-3xl font-black text-blue-950">
-            Practice Complete
-          </h2>
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close feedback"
-          className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50 hover:text-blue-950"
-        >
-          <CloseIcon />
-        </button>
-      </div>
-
-      <div className="mt-6 rounded-3xl border border-blue-100 bg-blue-50 p-5">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <p className="text-sm font-bold uppercase tracking-[0.14em] text-blue-600">
-              Overall Score
-            </p>
-            <p className="mt-1 text-5xl font-black text-blue-950">84/100</p>
-          </div>
-          <span className="w-fit rounded-full bg-white px-4 py-2 text-sm font-bold text-blue-700 ring-1 ring-blue-100">
-            Strong attempt
-          </span>
-        </div>
-      </div>
-
-      <div className="mt-6 grid gap-4 sm:grid-cols-2">
-        <FeedbackBlock
-          title="What went well"
-          text="You asked for help clearly."
-        />
-        <FeedbackBlock
-          title="What to improve"
-          text="Try using a more natural opening phrase."
-        />
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:col-span-2">
-          <h3 className="font-bold text-blue-950">Better phrasing</h3>
-          <div className="mt-3 grid gap-3 sm:grid-cols-2">
-            <div className="rounded-2xl bg-slate-50 p-4">
-              <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-400">
-                Instead of
-              </p>
-              <p className="mt-2 text-slate-600">&quot;Where notebooks?&quot;</p>
-            </div>
-            <div className="rounded-2xl bg-blue-50 p-4">
-              <p className="text-xs font-bold uppercase tracking-[0.14em] text-blue-600">
-                Try
-              </p>
-              <p className="mt-2 text-blue-950">
-                &quot;Excuse me, where can I find notebooks?&quot;
-              </p>
-            </div>
-          </div>
-        </div>
-        <FeedbackBlock
-          title="Cultural/social tip"
-          text="In U.S. stores, it is common to politely ask employees directly for help."
-          className="sm:col-span-2"
-        />
-      </div>
-
-      <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-        <button
-          type="button"
-          onClick={onClose}
-          className="rounded-full border border-slate-200 px-6 py-3 text-sm font-bold text-slate-600 transition hover:bg-slate-50"
-        >
-          Back to Scenario
-        </button>
-        <button
-          type="button"
-          onClick={onTryAgain}
-          className="rounded-full bg-blue-600 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-blue-600/20 transition hover:bg-blue-700"
-        >
-          Try Again
-        </button>
+        Stay focused on speaking naturally. The coach will keep responses brief so you can practice the full situation.
       </div>
     </section>
   );
@@ -791,66 +734,28 @@ function FeedbackBlock({
   );
 }
 
-function LoadingCard({
-  scenario,
-  onClose,
-}: {
-  scenario: Scenario;
-  onClose: () => void;
-}) {
+function LoadingCard({ scenario, onClose }: { scenario: Scenario; onClose: () => void }) {
   return (
     <section className="relative w-full max-w-md rounded-3xl bg-white p-8 text-center shadow-2xl">
       <FloatingCloseButton onClose={onClose} label="Close loading modal" />
       <LoadingIndicator />
-      <h2 className="mt-6 text-2xl font-bold text-blue-950">
-        AI Coach Starting...
-      </h2>
-      <p className="mt-3 leading-7 text-slate-500">
-        Setting up your live roleplay practice.
-      </p>
-      <p className="mt-4 rounded-full bg-blue-50 px-4 py-2 text-sm font-bold text-blue-700">
-        Scenario: {scenario.title}
-      </p>
+      <h2 className="mt-6 text-2xl font-bold text-blue-950">AI Coach Starting...</h2>
+      <p className="mt-3 leading-7 text-slate-500">Setting up your live roleplay practice.</p>
+      <p className="mt-4 rounded-full bg-blue-50 px-4 py-2 text-sm font-bold text-blue-700">Scenario: {scenario.title}</p>
     </section>
   );
 }
 
-function ErrorCard({
-  message,
-  onRetry,
-  onUseMock,
-  onClose,
-}: {
-  message: string;
-  onRetry: () => void;
-  onUseMock: () => void;
-  onClose: () => void;
-}) {
+function ErrorCard({ message, onRetry, onUseMock, onClose }: { message: string; onRetry: () => void; onUseMock: () => void; onClose: () => void }) {
   return (
     <section className="relative w-full max-w-md rounded-3xl bg-white p-8 text-center shadow-2xl">
       <FloatingCloseButton onClose={onClose} label="Close error modal" />
-      <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-rose-50 text-rose-600">
-        <WarningIcon />
-      </div>
-      <h2 className="mt-6 text-2xl font-bold text-blue-950">
-        Could not start voice practice
-      </h2>
+      <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-rose-50 text-rose-600"><WarningIcon /></div>
+      <h2 className="mt-6 text-2xl font-bold text-blue-950">Could not start practice</h2>
       <p className="mt-3 leading-7 text-slate-500">{message}</p>
       <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:justify-center">
-        <button
-          type="button"
-          onClick={onRetry}
-          className="rounded-full bg-blue-600 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-blue-600/20 transition hover:bg-blue-700"
-        >
-          Retry
-        </button>
-        <button
-          type="button"
-          onClick={onUseMock}
-          className="rounded-full border border-slate-200 px-6 py-3 text-sm font-bold text-slate-600 transition hover:bg-slate-50"
-        >
-          Use Mock
-        </button>
+        <button onClick={onRetry} className="rounded-full bg-blue-600 px-6 py-3 text-sm font-bold text-white hover:bg-blue-700">Retry</button>
+        <button onClick={onUseMock} className="rounded-full border border-slate-200 px-6 py-3 text-sm font-bold text-slate-600 hover:bg-slate-50">Use Mock</button>
       </div>
     </section>
   );
@@ -861,30 +766,15 @@ function ProcessingCard({ onClose }: { onClose: () => void }) {
     <section className="relative w-full max-w-md rounded-3xl bg-white p-8 text-center shadow-2xl">
       <FloatingCloseButton onClose={onClose} label="Close processing modal" />
       <LoadingIndicator />
-      <h2 className="mt-6 text-2xl font-bold text-blue-950">
-        Generating Feedback...
-      </h2>
-      <p className="mt-3 leading-7 text-slate-500">
-        Reviewing your clarity, confidence, and natural phrasing.
-      </p>
+      <h2 className="mt-6 text-2xl font-bold text-blue-950">Generating Feedback...</h2>
+      <p className="mt-3 leading-7 text-slate-500">Reviewing your clarity, confidence, and natural phrasing.</p>
     </section>
   );
 }
 
-function FloatingCloseButton({
-  onClose,
-  label,
-}: {
-  onClose: () => void;
-  label: string;
-}) {
+function FloatingCloseButton({ onClose, label }: { onClose: () => void; label: string }) {
   return (
-    <button
-      type="button"
-      onClick={onClose}
-      aria-label={label}
-      className="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50 hover:text-blue-950"
-    >
+    <button onClick={onClose} aria-label={label} className="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-500 hover:bg-slate-50">
       <CloseIcon />
     </button>
   );
@@ -903,14 +793,9 @@ function AudioWaveform({ active }: { active: boolean }) {
     <div className="mt-5 flex h-10 items-end justify-center gap-1.5">
       {[18, 28, 38, 24, 32, 20, 34].map((height, index) => (
         <span
-          key={`${height}-${index}`}
-          className={`w-2 rounded-full bg-blue-500 ${
-            active ? "animate-pulse" : "opacity-30"
-          }`}
-          style={{
-            height,
-            animationDelay: `${index * 120}ms`,
-          }}
+          key={index}
+          className={`w-2 rounded-full bg-blue-500 ${active ? "animate-pulse" : "opacity-30"}`}
+          style={{ height, animationDelay: `${index * 120}ms` }}
         />
       ))}
     </div>

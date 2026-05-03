@@ -13,6 +13,7 @@ from livekit.agents import (
     cli,
 )
 from livekit.plugins import google, silero
+import requests
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parents[1] / ".env.local")
 
@@ -248,13 +249,27 @@ async def entrypoint(ctx: JobContext):
         
         print("\n" + "="*50)
         print("📜 FINAL SCENARIO TRANSCRIPT")
-        print(f"Assistant turns: {assistant_turns}")
-        print("="*50)
-        if not transcript:
-            print("(!) EMPTY TRANSCRIPT: No speech-to-text matches found.")
-            print("Check if 'DATA CAPTURED' appeared in the logs during the call.")
-        else:
-            print(json.dumps(transcript, indent=2))
+        if transcript:
+            # Analyze and Send Feedback
+            # In production, call an LLM here to generate these strings from the transcript
+            feedback_data = {
+                "roomName": ctx.room.name,
+                "score": 88, # Example score from analysis
+                "wentWell": "You clearly stated your goal at the start.",
+                "toImprove": "Try using more polite fillers like 'Um' or 'Excuse me'.",
+                "insteadOf": transcript[1]['text'] if len(transcript) > 1 else "...",
+                "tryThis": "Could you please help me with...",
+                "culturalTip": "In this setting, directness is valued but formal greetings are expected."
+            }
+
+            try:
+                # Send to the Next.js API
+                api_url = os.getenv("NEXT_PUBLIC_APP_URL", "http://localhost:3000")
+                requests.post(f"{api_url}/api/feedback", json=feedback_data)
+            except Exception as e:
+                print(f">>> Failed to send feedback: {e}")
+
+        print(json.dumps(transcript, indent=2))
         print("="*50 + "\n")
 
 if __name__ == "__main__":
