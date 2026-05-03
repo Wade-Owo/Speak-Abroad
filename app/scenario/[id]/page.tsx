@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { FeedbackItem } from "../../components/FeedbackItem";
 import { Navbar } from "../../components/Navbar";
 import { ScenarioSetup } from "../../components/ScenarioSetup";
 import { getScenarioById, scenarios } from "../../data/scenarios";
@@ -68,8 +67,7 @@ export default async function ScenarioPage({
             </ul>
           </section>
 
-          {/* This section is now dynamic */}
-          <FeedbackSection scenarioId={id} />
+          <FeedbackSection />
         </aside>
       </main>
     </div>

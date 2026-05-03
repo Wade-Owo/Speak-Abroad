@@ -34,6 +34,33 @@ type SpeakerStatus =
   | "Waiting for your response..."
   | "Muted";
 
+type FeedbackData = {
+  roomName?: string;
+  score: number;
+  wentWell: string;
+  toImprove: string;
+  insteadOf: string;
+  tryThis: string;
+  culturalTip: string;
+};
+
+type LiveKitTokenResponse = {
+  token?: string;
+  serverUrl?: string;
+  roomName?: string;
+  error?: string;
+};
+
+const mockFeedbackData: FeedbackData = {
+  score: 84,
+  wentWell: "You asked for help clearly and stayed engaged.",
+  toImprove: "Try using a more natural opening phrase.",
+  insteadOf: "Where notebooks?",
+  tryThis: "Excuse me, where can I find notebooks?",
+  culturalTip:
+    "In U.S. stores, it is common to politely ask employees directly for help.",
+};
+
 const roleLabels: Record<Scenario["iconName"], string> = {
   cart: "Cashier",
   professor: "Professor",
@@ -82,7 +109,7 @@ export function CoachModal({
   const [token, setToken] = useState<string>();
   const [serverUrl, setServerUrl] = useState<string>();
   const [roomName, setRoomName] = useState<string>(); // Tracks the specific session ID
-  const [feedbackData, setFeedbackData] = useState<any>(null); // Stores dynamic feedback
+  const [feedbackData, setFeedbackData] = useState<FeedbackData | null>(null);
   const [errorMessage, setErrorMessage] = useState<string>();
   const [isMockMode, setIsMockMode] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
@@ -97,6 +124,8 @@ export function CoachModal({
       setErrorMessage(undefined);
       setToken(undefined);
       setServerUrl(undefined);
+      setRoomName(undefined);
+      setFeedbackData(null);
 
       try {
         const params = new URLSearchParams({
@@ -107,7 +136,7 @@ export function CoachModal({
         const response = await fetch(`/api/livekit?${params.toString()}`, {
           signal: controller.signal,
         });
-        const data = await response.json();
+        const data = (await response.json()) as LiveKitTokenResponse;
 
         if (!response.ok || !data.token || !data.serverUrl) {
           throw new Error(data.error || "Could not start the LiveKit session.");
@@ -130,14 +159,25 @@ export function CoachModal({
 
   // 2. Feedback Logic: Poll the API until the Python agent sends results
   useEffect(() => {
-    if (modalState !== "processing" || !roomName) return;
+    if (modalState !== "processing") {
+      return;
+    }
+
+    if (isMockMode || !roomName) {
+      const timer = window.setTimeout(() => {
+        setFeedbackData(mockFeedbackData);
+        setModalState("feedback");
+      }, 1500);
+
+      return () => window.clearTimeout(timer);
+    }
 
     let attempts = 0;
-    const interval = setInterval(async () => {
+    const interval = window.setInterval(async () => {
       attempts++;
       try {
         const res = await fetch(`/api/feedback?roomName=${roomName}`);
-        const data = await res.json();
+        const data = (await res.json()) as FeedbackData | null;
 
         if (data || attempts > 15) { // Stop after results found or ~30 seconds
           setFeedbackData(data);
@@ -150,10 +190,14 @@ export function CoachModal({
     }, 2000);
 
     return () => clearInterval(interval);
-  }, [modalState, roomName]);
+  }, [isMockMode, modalState, roomName]);
 
   const retryLiveKit = () => {
     setIsMockMode(false);
+    setFeedbackData(null);
+    setToken(undefined);
+    setServerUrl(undefined);
+    setRoomName(undefined);
     setModalState("loading");
     setRetryCount((current) => current + 1);
   };
@@ -161,6 +205,10 @@ export function CoachModal({
   const useMockMode = () => {
     setIsMockMode(true);
     setErrorMessage(undefined);
+    setFeedbackData(null);
+    setToken(undefined);
+    setServerUrl(undefined);
+    setRoomName(undefined);
     setModalState("live");
   };
 
@@ -344,7 +392,7 @@ function FeedbackSummary({
   onClose,
   onTryAgain,
 }: {
-  data: any;
+  data: FeedbackData | null;
   onClose: () => void;
   onTryAgain: () => void;
 }) {
@@ -353,7 +401,7 @@ function FeedbackSummary({
     return (
       <section className="relative w-full max-w-md rounded-3xl bg-white p-8 text-center shadow-2xl">
         <h2 className="text-2xl font-bold text-blue-950">Feedback Unavailable</h2>
-        <p className="mt-3 leading-7 text-slate-500">We couldn't generate a report for this session.</p>
+        <p className="mt-3 leading-7 text-slate-500">We couldn&apos;t generate a report for this session.</p>
         <button onClick={onClose} className="mt-6 rounded-full bg-blue-600 px-6 py-3 text-white">Back</button>
       </section>
     );
@@ -392,11 +440,11 @@ function FeedbackSummary({
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             <div className="rounded-2xl bg-slate-50 p-4">
               <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-400">Instead of</p>
-              <p className="mt-2 text-slate-600">"{data.insteadOf}"</p>
+              <p className="mt-2 text-slate-600">&quot;{data.insteadOf}&quot;</p>
             </div>
             <div className="rounded-2xl bg-blue-50 p-4">
               <p className="text-xs font-bold uppercase tracking-[0.14em] text-blue-600">Try</p>
-              <p className="mt-2 text-blue-950">"{data.tryThis}"</p>
+              <p className="mt-2 text-blue-950">&quot;{data.tryThis}&quot;</p>
             </div>
           </div>
         </div>
