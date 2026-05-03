@@ -36,6 +36,7 @@ export function ScenarioSetup({ scenario }: { scenario: Scenario }) {
           </svg>
           Back to Scenarios
         </Link>
+
         <p className="text-sm font-semibold uppercase tracking-[0.18em] text-blue-600">
           Practice Setup
         </p>
