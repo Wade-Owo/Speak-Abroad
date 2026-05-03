@@ -1,4 +1,5 @@
 export type ScenarioDifficulty = "Easy" | "Medium" | "Hard";
+export type ConversationStarter = "ai" | "user";
 
 export type Scenario = {
   id: string;
@@ -7,6 +8,7 @@ export type Scenario = {
   difficulty: ScenarioDifficulty;
   category: string;
   iconName: "cart" | "professor" | "party" | "calendar" | "classmate" | "doctor" | "briefcase" | "home";
+  conversationStarter: ConversationStarter;
   goal: string;
   details: string;
 };
@@ -19,6 +21,7 @@ export const scenarios: Scenario[] = [
     difficulty: "Easy",
     category: "Daily Life",
     iconName: "cart",
+    conversationStarter: "ai",
     goal: "Ask where an item is and complete checkout.",
     details:
       "Practice navigating a busy store conversation, from asking where to find an item to responding naturally when the cashier asks about bags, payment, or rewards.",
@@ -30,6 +33,7 @@ export const scenarios: Scenario[] = [
     difficulty: "Medium",
     category: "Campus",
     iconName: "professor",
+    conversationStarter: "user",
     goal: "Ask for clarification and confirm next steps.",
     details:
       "Build confidence speaking with a professor in a respectful, direct way while explaining what you need and checking that you understood the answer.",
@@ -41,6 +45,7 @@ export const scenarios: Scenario[] = [
     difficulty: "Medium",
     category: "Social",
     iconName: "party",
+    conversationStarter: "user",
     goal: "Introduce yourself and ask friendly follow-up questions.",
     details:
       "Practice relaxed social English for meeting someone new, finding shared interests, and exiting a conversation without feeling awkward.",
@@ -52,6 +57,7 @@ export const scenarios: Scenario[] = [
     difficulty: "Easy",
     category: "Daily Life",
     iconName: "calendar",
+    conversationStarter: "user",
     goal: "Reserve a time and confirm the important details.",
     details:
       "Rehearse the language of booking, changing, and confirming a reservation so the details are clear the first time.",
@@ -63,6 +69,7 @@ export const scenarios: Scenario[] = [
     difficulty: "Easy",
     category: "Campus",
     iconName: "classmate",
+    conversationStarter: "user",
     goal: "Ask for help while being respectful of their time.",
     details:
       "Practice making a clear request, explaining what you already tried, and offering a simple next step.",
@@ -74,6 +81,7 @@ export const scenarios: Scenario[] = [
     difficulty: "Hard",
     category: "Health",
     iconName: "doctor",
+    conversationStarter: "ai",
     goal: "Explain symptoms and repeat back the doctor instructions.",
     details:
       "Prepare for a medical visit by practicing concise symptom descriptions, timing, severity, and questions about next steps.",
@@ -85,6 +93,7 @@ export const scenarios: Scenario[] = [
     difficulty: "Hard",
     category: "Career",
     iconName: "briefcase",
+    conversationStarter: "ai",
     goal: "Answer opening questions and transition into the interview.",
     details:
       "Practice friendly but professional small talk so the first few minutes of an interview feel steady and natural.",
@@ -96,6 +105,7 @@ export const scenarios: Scenario[] = [
     difficulty: "Medium",
     category: "Housing",
     iconName: "home",
+    conversationStarter: "user",
     goal: "Raise a concern and agree on a practical next step.",
     details:
       "Practice direct, considerate language for everyday roommate issues, including shared responsibilities and boundaries.",

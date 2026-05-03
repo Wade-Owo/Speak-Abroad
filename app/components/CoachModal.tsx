@@ -1,9 +1,23 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import {
+  LiveKitRoom,
+  RoomAudioRenderer,
+  useConnectionState,
+  useLocalParticipant,
+  useParticipants,
+  useRoomContext,
+} from "@livekit/components-react";
+import { useEffect, useState } from "react";
+import { ConnectionState } from "livekit-client";
 import type { Scenario } from "../data/scenarios";
 
-export type CoachModalState = "loading" | "live" | "processing" | "feedback";
+export type CoachModalState =
+  | "loading"
+  | "live"
+  | "processing"
+  | "feedback"
+  | "error";
 
 type CoachModalProps = {
   scenario: Scenario;
@@ -13,9 +27,11 @@ type CoachModalProps = {
 };
 
 type SpeakerStatus =
+  | "Setting up..."
   | "Listening..."
   | "AI speaking..."
-  | "Waiting for your response...";
+  | "Waiting for your response..."
+  | "Muted";
 
 const roleLabels: Record<Scenario["iconName"], string> = {
   cart: "Cashier",
@@ -28,25 +44,26 @@ const roleLabels: Record<Scenario["iconName"], string> = {
   home: "Roommate",
 };
 
-type TranscriptMessage = {
-  speaker: "AI" | "You";
-  text: string;
+const scenarioTips: Record<Scenario["iconName"], string> = {
+  cart: "Try starting with “Excuse me” when asking for help in a store.",
+  professor: "Be direct about what confused you, then confirm the next step.",
+  party: "Ask one friendly follow-up question before changing topics.",
+  calendar: "Repeat the date and time back to confirm the reservation.",
+  classmate: "Mention what you already tried before asking for help.",
+  doctor: "Describe when the symptom started and how severe it feels.",
+  briefcase: "Keep small talk warm, brief, and professional.",
+  home: "Use calm, specific language when discussing shared expectations.",
 };
 
-const transcript: TranscriptMessage[] = [
-  {
-    speaker: "AI",
-    text: "Hi! Welcome in. What are you looking for today?",
-  },
-  {
-    speaker: "You",
-    text: "Hi, where can I find notebooks?",
-  },
-  {
-    speaker: "AI",
-    text: "They're in aisle four, near the checkout.",
-  },
-];
+function starterLabel(starter: Scenario["conversationStarter"]) {
+  return starter === "ai" ? "Coach starts" : "You start";
+}
+
+function starterCue(starter: Scenario["conversationStarter"]) {
+  return starter === "ai"
+    ? "Wait for the coach to begin."
+    : "Start by speaking first.";
+}
 
 export function CoachModal({
   scenario,
@@ -55,27 +72,219 @@ export function CoachModal({
   onClose,
 }: CoachModalProps) {
   const [modalState, setModalState] = useState<CoachModalState>("loading");
-  const [isMuted, setIsMuted] = useState(false);
-  const [speakerStatus, setSpeakerStatus] =
-    useState<SpeakerStatus>("Listening...");
-  const [visibleTranscript, setVisibleTranscript] = useState<
-    TranscriptMessage[]
-  >(() => transcript.slice(0, 1));
+  const [token, setToken] = useState<string>();
+  const [serverUrl, setServerUrl] = useState<string>();
+  const [errorMessage, setErrorMessage] = useState<string>();
+  const [isMockMode, setIsMockMode] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
-    if (modalState !== "loading" && modalState !== "processing") {
+    if (modalState !== "loading" || isMockMode) {
       return;
     }
 
-    const timer = window.setTimeout(() => {
-      setModalState(modalState === "loading" ? "live" : "feedback");
-    }, 1500);
+    const controller = new AbortController();
+
+    async function fetchToken() {
+      setErrorMessage(undefined);
+      setToken(undefined);
+      setServerUrl(undefined);
+
+      try {
+        const params = new URLSearchParams({
+          scenarioId: scenario.id,
+          pressure,
+          personality,
+        });
+        const response = await fetch(`/api/livekit?${params.toString()}`, {
+          signal: controller.signal,
+        });
+        const data = (await response.json()) as {
+          token?: string;
+          serverUrl?: string;
+          error?: string;
+        };
+
+        if (!response.ok || !data.token || !data.serverUrl) {
+          throw new Error(data.error || "Could not start the LiveKit session.");
+        }
+
+        setToken(data.token);
+        setServerUrl(data.serverUrl);
+        setModalState("live");
+      } catch (error) {
+        if (controller.signal.aborted) {
+          return;
+        }
+        setErrorMessage(
+          error instanceof Error
+            ? error.message
+            : "Could not start the LiveKit session.",
+        );
+        setModalState("error");
+      }
+    }
+
+    fetchToken();
+
+    return () => controller.abort();
+  }, [isMockMode, modalState, personality, pressure, retryCount, scenario.id]);
+
+  useEffect(() => {
+    if (modalState !== "processing") {
+      return;
+    }
+
+    const timer = window.setTimeout(() => setModalState("feedback"), 1500);
 
     return () => window.clearTimeout(timer);
   }, [modalState]);
 
+  const retryLiveKit = () => {
+    setIsMockMode(false);
+    setModalState("loading");
+    setRetryCount((current) => current + 1);
+  };
+
+  const useMockMode = () => {
+    setIsMockMode(true);
+    setErrorMessage(undefined);
+    setToken(undefined);
+    setServerUrl(undefined);
+    setModalState("live");
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-blue-950/45 p-4 backdrop-blur-sm">
+      {modalState === "loading" ? (
+        <LoadingCard scenario={scenario} onClose={onClose} />
+      ) : null}
+
+      {modalState === "live" ? (
+        isMockMode ? (
+          <MockLivePractice
+            scenario={scenario}
+            pressure={pressure}
+            personality={personality}
+            onClose={onClose}
+            onEnd={() => setModalState("processing")}
+          />
+        ) : token && serverUrl ? (
+          <LiveKitRoom
+            serverUrl={serverUrl}
+            token={token}
+            connect
+            audio
+            onError={(error) => {
+              setErrorMessage(error.message);
+              setModalState("error");
+            }}
+            onMediaDeviceFailure={(_, kind) => {
+              setErrorMessage(
+                `Could not access your ${kind || "audio"} device.`,
+              );
+              setModalState("error");
+            }}
+            onDisconnected={() => setModalState("processing")}
+          >
+            <LiveCoachContent
+              scenario={scenario}
+              pressure={pressure}
+              personality={personality}
+              onClose={onClose}
+              onEnd={() => setModalState("processing")}
+            />
+            <RoomAudioRenderer />
+          </LiveKitRoom>
+        ) : null
+      ) : null}
+
+      {modalState === "error" ? (
+        <ErrorCard
+          message={errorMessage || "Could not start the LiveKit session."}
+          onRetry={retryLiveKit}
+          onUseMock={useMockMode}
+          onClose={onClose}
+        />
+      ) : null}
+
+      {modalState === "processing" ? (
+        <ProcessingCard onClose={onClose} />
+      ) : null}
+
+      {modalState === "feedback" ? (
+        <FeedbackSummary
+          onClose={onClose}
+          onTryAgain={retryLiveKit}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function LiveCoachContent({
+  scenario,
+  pressure,
+  personality,
+  onClose,
+  onEnd,
+}: CoachModalProps & { onEnd: () => void }) {
+  const room = useRoomContext();
+  const connectionState = useConnectionState(room);
+  const participants = useParticipants({ room });
+  const { isMicrophoneEnabled, localParticipant } = useLocalParticipant({
+    room,
+  });
+
+  const aiSpeaking =
+    participants.some(
+      (participant) =>
+        participant.identity !== localParticipant.identity &&
+        participant.isSpeaking,
+    );
+
+  const speakerStatus: SpeakerStatus =
+    connectionState !== ConnectionState.Connected
+      ? "Setting up..."
+      : !isMicrophoneEnabled
+        ? "Muted"
+        : aiSpeaking
+          ? "AI speaking..."
+          : "Listening...";
+
+  return (
+    <LivePracticeLayout
+      scenario={scenario}
+      pressure={pressure}
+      personality={personality}
+      isMuted={!isMicrophoneEnabled}
+      speakerStatus={speakerStatus}
+      aiSpeaking={aiSpeaking}
+      onClose={onClose}
+      onEnd={() => {
+        room.disconnect();
+        onEnd();
+      }}
+      onToggleMuted={() => {
+        localParticipant.setMicrophoneEnabled(!isMicrophoneEnabled);
+      }}
+    />
+  );
+}
+
+function MockLivePractice({
+  scenario,
+  pressure,
+  personality,
+  onClose,
+  onEnd,
+}: CoachModalProps & { onEnd: () => void }) {
+  const [isMuted, setIsMuted] = useState(false);
+  const [speakerStatus, setSpeakerStatus] =
+    useState<SpeakerStatus>("Listening...");
+
   useEffect(() => {
-    if (modalState !== "live" || isMuted) {
+    if (isMuted) {
       return;
     }
 
@@ -91,85 +300,80 @@ export function CoachModal({
     }, 2200);
 
     return () => window.clearInterval(timer);
-  }, [modalState, isMuted]);
-
-  useEffect(() => {
-    if (modalState !== "live") {
-      return;
-    }
-
-    const timers = transcript.slice(1).map((_, index) =>
-      window.setTimeout(() => {
-        setVisibleTranscript(transcript.slice(0, index + 2));
-      }, (index + 1) * 1200),
-    );
-
-    return () => {
-      timers.forEach((timer) => window.clearTimeout(timer));
-    };
-  }, [modalState]);
+  }, [isMuted]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-blue-950/45 p-4 backdrop-blur-sm">
-      {modalState === "loading" ? (
-        <LoadingCard scenario={scenario} onClose={onClose} />
-      ) : null}
-
-      {modalState === "live" ? (
-        <section className="max-h-[96vh] min-h-[86vh] w-full max-w-5xl overflow-y-auto rounded-3xl bg-white p-5 shadow-2xl sm:p-6">
-          <CoachHeader
-            scenario={scenario}
-            pressure={pressure}
-            personality={personality}
-            onClose={onClose}
-          />
-          <div className="mt-5 grid gap-4 lg:min-h-[calc(86vh-9.5rem)] lg:grid-cols-[0.9fr_auto_1fr] lg:items-stretch">
-            <div className="flex flex-col gap-4">
-              <CoachVoicePanel
-                scenario={scenario}
-                isMuted={isMuted}
-                speakerStatus={speakerStatus}
-                onEnd={() => setModalState("processing")}
-              />
-            </div>
-            <PracticeControls
-              isMuted={isMuted}
-              onToggleMuted={() => {
-                setIsMuted((current) => {
-                  const nextMuted = !current;
-                  if (nextMuted) {
-                    setSpeakerStatus("Waiting for your response...");
-                  } else {
-                    setSpeakerStatus("Listening...");
-                  }
-                  return nextMuted;
-                });
-              }}
-            />
-            <div className="flex flex-col gap-4">
-              <GoalCard goal={scenario.goal} />
-              <TranscriptPanel messages={visibleTranscript} />
-            </div>
-          </div>
-        </section>
-      ) : null}
-
-      {modalState === "processing" ? (
-        <ProcessingCard onClose={onClose} />
-      ) : null}
-
-      {modalState === "feedback" ? (
-        <FeedbackSummary
-          onClose={onClose}
-          onTryAgain={() => {
-            setIsMuted(false);
+    <LivePracticeLayout
+      scenario={scenario}
+      pressure={pressure}
+      personality={personality}
+      isMuted={isMuted}
+      speakerStatus={isMuted ? "Muted" : speakerStatus}
+      aiSpeaking={!isMuted && speakerStatus === "AI speaking..."}
+      onClose={onClose}
+      onEnd={onEnd}
+      onToggleMuted={() => {
+        setIsMuted((current) => {
+          const nextMuted = !current;
+          if (!nextMuted) {
             setSpeakerStatus("Listening...");
-            setVisibleTranscript(transcript.slice(0, 1));
-            setModalState("live");
-          }}
+          }
+          return nextMuted;
+        });
+      }}
+    />
+  );
+}
+
+function LivePracticeLayout({
+  scenario,
+  pressure,
+  personality,
+  isMuted,
+  speakerStatus,
+  aiSpeaking,
+  onClose,
+  onEnd,
+  onToggleMuted,
+}: {
+  scenario: Scenario;
+  pressure: string;
+  personality: string;
+  isMuted: boolean;
+  speakerStatus: SpeakerStatus;
+  aiSpeaking: boolean;
+  onClose: () => void;
+  onEnd: () => void;
+  onToggleMuted: () => void;
+}) {
+  return (
+    <section className="max-h-[96vh] min-h-[86vh] w-full max-w-5xl overflow-y-auto rounded-3xl bg-white p-5 shadow-2xl sm:p-6">
+      <CoachHeader
+        scenario={scenario}
+        pressure={pressure}
+        personality={personality}
+        onClose={onClose}
+      />
+      <div className="mt-5 grid gap-4 lg:min-h-[calc(86vh-9.5rem)] lg:grid-cols-[0.9fr_auto_1fr] lg:items-stretch">
+        <div className="flex flex-col gap-4">
+          <CoachVoicePanel
+            scenario={scenario}
+            isMuted={isMuted}
+            speakerStatus={speakerStatus}
+            aiSpeaking={aiSpeaking}
+            onEnd={onEnd}
+          />
+        </div>
+        <PracticeControls
+          isMuted={isMuted}
+          onToggleMuted={onToggleMuted}
         />
-      ) : null}
-    </div>
+        <div className="flex flex-col gap-4">
+          <GoalCard goal={scenario.goal} />
+          <PracticeNotesPanel scenario={scenario} />
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -191,6 +395,9 @@ function CoachHeader({
           </span>
           <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600 ring-1 ring-slate-200">
             {personality}
+          </span>
+          <span className="rounded-full bg-white px-3 py-1 text-xs font-bold text-blue-700 ring-1 ring-blue-100">
+            {starterLabel(scenario.conversationStarter)}
           </span>
         </div>
       </div>
@@ -236,15 +443,16 @@ function CoachVoicePanel({
   scenario,
   isMuted,
   speakerStatus,
+  aiSpeaking,
   onEnd,
 }: {
   scenario: Scenario;
   isMuted: boolean;
   speakerStatus: SpeakerStatus;
+  aiSpeaking: boolean;
   onEnd: () => void;
 }) {
   const role = roleLabels[scenario.iconName];
-  const aiSpeaking = !isMuted && speakerStatus === "AI speaking...";
 
   return (
     <section className="flex flex-1 flex-col rounded-3xl border border-blue-100 bg-blue-50/70 p-5 text-center shadow-sm">
@@ -257,6 +465,9 @@ function CoachVoicePanel({
       </div>
       <p className="mt-5 text-lg font-bold text-blue-950">
         {isMuted ? "Muted" : speakerStatus}
+      </p>
+      <p className="mt-2 text-sm font-semibold text-slate-500">
+        {starterCue(scenario.conversationStarter)}
       </p>
       <button
         type="button"
@@ -298,50 +509,46 @@ function PracticeControls({
   );
 }
 
-function TranscriptPanel({ messages }: { messages: TranscriptMessage[] }) {
-  const scrollRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    scrollRef.current?.scrollTo({
-      top: scrollRef.current.scrollHeight,
-      behavior: "smooth",
-    });
-  }, [messages]);
-
+function PracticeNotesPanel({ scenario }: { scenario: Scenario }) {
   return (
     <section className="flex min-h-[31rem] flex-col rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="flex items-center justify-between">
-        <h3 className="text-xl font-bold text-blue-950">Live Transcript</h3>
+      <div>
+        <p className="text-xs font-bold uppercase tracking-[0.14em] text-blue-600">
+          Practice Notes
+        </p>
+        <h3 className="mt-2 text-xl font-bold text-blue-950">
+          Conversation in progress
+        </h3>
       </div>
-      <div
-        ref={scrollRef}
-        className="mt-5 flex-1 space-y-4 overflow-y-auto rounded-2xl bg-slate-50 p-4"
-      >
-        {messages.map((message) => (
-          <div
-            key={`${message.speaker}-${message.text}`}
-            className={`flex ${
-              message.speaker === "You" ? "justify-end" : "justify-start"
-            }`}
-          >
-            <div
-              className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-6 shadow-sm ${
-                message.speaker === "You"
-                  ? "rounded-br-sm bg-blue-600 text-white"
-                  : "rounded-bl-sm bg-white text-slate-700"
-              }`}
-            >
-              <p
-                className={`mb-1 text-xs font-bold ${
-                  message.speaker === "You" ? "text-blue-100" : "text-blue-700"
-                }`}
-              >
-                {message.speaker}
-              </p>
-              {message.text}
-            </div>
-          </div>
-        ))}
+
+      <div className="mt-5 space-y-4">
+        <div className="rounded-2xl bg-slate-50 p-4">
+          <p className="text-sm font-bold text-blue-950">Tip</p>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            {scenarioTips[scenario.iconName]}
+          </p>
+        </div>
+        <div className="rounded-2xl bg-blue-50 p-4">
+          <p className="text-sm font-bold text-blue-950">After practice</p>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            Feedback will be generated after practice. For now, you will see a
+            polished mock feedback summary.
+          </p>
+        </div>
+        <div className="rounded-2xl border border-slate-200 p-4">
+          <p className="text-sm font-bold text-blue-950">
+            Background transcript
+          </p>
+          <p className="mt-2 text-sm leading-6 text-slate-500">
+            The conversation transcript is being saved in the agent logs for
+            future feedback analysis.
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-auto pt-5 text-sm leading-6 text-slate-500">
+        Stay focused on speaking naturally. The coach will keep responses brief
+        so you can practice the full situation.
       </div>
     </section>
   );
@@ -485,6 +692,47 @@ function LoadingCard({
   );
 }
 
+function ErrorCard({
+  message,
+  onRetry,
+  onUseMock,
+  onClose,
+}: {
+  message: string;
+  onRetry: () => void;
+  onUseMock: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <section className="relative w-full max-w-md rounded-3xl bg-white p-8 text-center shadow-2xl">
+      <FloatingCloseButton onClose={onClose} label="Close error modal" />
+      <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-rose-50 text-rose-600">
+        <WarningIcon />
+      </div>
+      <h2 className="mt-6 text-2xl font-bold text-blue-950">
+        Could not start voice practice
+      </h2>
+      <p className="mt-3 leading-7 text-slate-500">{message}</p>
+      <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:justify-center">
+        <button
+          type="button"
+          onClick={onRetry}
+          className="rounded-full bg-blue-600 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-blue-600/20 transition hover:bg-blue-700"
+        >
+          Retry
+        </button>
+        <button
+          type="button"
+          onClick={onUseMock}
+          className="rounded-full border border-slate-200 px-6 py-3 text-sm font-bold text-slate-600 transition hover:bg-slate-50"
+        >
+          Use Mock
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function ProcessingCard({ onClose }: { onClose: () => void }) {
   return (
     <section className="relative w-full max-w-md rounded-3xl bg-white p-8 text-center shadow-2xl">
@@ -601,6 +849,25 @@ function PhoneOffIcon() {
     >
       <path d="m2 2 20 20" />
       <path d="M9.5 6.5 8.4 3.7A2 2 0 0 0 6.5 2.5H4.7A2.2 2.2 0 0 0 2.5 4.8C2.9 14 10 21.1 19.2 21.5a2.2 2.2 0 0 0 2.3-2.2v-1.8a2 2 0 0 0-1.2-1.9l-2.8-1.1" />
+    </svg>
+  );
+}
+
+function WarningIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="h-7 w-7"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2.25"
+      viewBox="0 0 24 24"
+    >
+      <path d="M12 9v4" />
+      <path d="M12 17h.01" />
+      <path d="M10.3 3.9 2.5 18a2 2 0 0 0 1.7 3h15.6a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
     </svg>
   );
 }
