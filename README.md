@@ -1,39 +1,48 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# SpeakAbroad 🌍🗣️
 
-## Getting Started
+**SpeakAbroad** is an AI-powered conversational practice platform designed to help international students build confidence by simulating real-life scenarios in an interactive, safe environment.
 
-First, run the development server:
+## 💡 Inspiration (The Problem & Solution)
+International college students face conversation barriers every day when they begin school. While many meet the academic proficiency requirements to attend a university, real-world campus communication is often much more difficult and nuanced than standardized testing prepares them for. 
 
-## Run Frontend
-npm run dev
+Our inspiration stems from a simple truth: **confidence is built through actual practice.** SpeakAbroad bridges the gap between textbook English and real-world application, allowing students to navigate the exact social and academic situations they will encounter on campus.
 
-## Run Backend
-Open new terminal
+## ✨ Core Features
+* **🎭 Scenario-Based Practice:** Practice real-life college scenarios that mimic realistic pacing, context, and social expectations. 
+* **⏱️ Pressure Mode:** An adaptable setting that changes the environment of the conversation (e.g., placing the student under time pressure) to test their fluency in stressful situations.
+* **🎙️ AI-Powered Voice Conversations:** Students interact through natural speech using persona-based agents, making the practice feel like a genuine FaceTime or Zoom call.
+* **📈 Instant, Actionable Feedback:** After each session, users receive constructive feedback on their speaking clarity, response pacing, and specific areas for improvement to help track their progress over time.
 
-cd agent
+## 🛠️ How We Built It (Tech Stack)
+* **Frontend:** Next.js (Responsive UI and fast interaction)
+* **Live AI Conversation:** Gemini Live API (Low-latency voice interactions)
+* **Voice/Session Orchestration:** LiveKit Agents (Real-time voice agent management)
+* **Transcript Logging:** Gemini Live Transcription (Ensures clean, isolated text rather than attempting to transcribe a mixed audio recording after the fact)
+* **Feedback Engine:** Gemini 2.5 Flash text model (Parses the transcript to generate scores and coaching tips)
+* **Database:** Firebase Firestore (Saving user scores and historical feedback)
+* **Team Infrastructure:** GitHub (Version control & workflow) and Discord (Team sync)
 
-python agent.py dev
+## 🚧 Challenges We Ran Into
+* **WebRTC Thread Panics:** Force-closing rooms caused native thread panics on Windows. We had to engineer graceful shutdown handshakes between the browser and the Python worker.
+* **API Rate Limiting:** Hitting the Gemini Free Tier limits broke our app early on. We solved this by building resilient fallback mechanisms and "Mock Modes" so the UI never crashes for the user.
+* **Serverless Database Timeouts:** Next.js aggressively blocked Firebase’s live gRPC WebSocket connections, causing 30-second hangs. We overcame this by migrating to the REST-based Firestore Lite SDK.
+* **Complex Orchestration:** Syncing LiveKit token generation, port management, and room assignments between a Next.js frontend and a local Python worker required strict environment management.
 
-```
+## 🏆 Accomplishments We Are Proud Of
+* Successfully integrated the **Gemini Live API** with **LiveKit** to achieve a highly responsive, interrupting-capable conversational partner.
+* Built a seamless data loop that translates raw audio into structured transcripts, passing them to **Gemini 2.5 Flash** for personalized scoring and cultural tips.
+* Engineered graceful degradations so the student's practice session never abruptly crashes, even if backend APIs fail.
+* Successfully unified a Next.js App Router frontend, a Python voice orchestration layer, and a secure Firebase database into one cohesive product.
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## 🧠 What We Learned
+* **Multi-Modal Prompt Engineering:** Prompting an AI to hold a natural, spoken conversation requires entirely different constraints than prompting an AI to extract and analyze JSON data.
+* **Version Control Communication:** It is incredibly important to actively notify teammates of commit pushes to reduce the risk of merge conflicts and breaking the application state.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## 🚀 What’s Next for SpeakAbroad?
+* **Visual Avatars:** Integrate the Simli SDK to replace the audio waveform with a realistic, lip-synced talking face.
+* **Global Expansion:** Add region settings to dynamically adjust LiveKit voice accents and tailor the AI's cultural feedback to different countries (currently restricted to the U.S.).
+* **Career-Readiness Module:** Introduce high-stakes professional scenarios like job interviews, offer negotiations, and workplace communication.
+* **Progress Dashboard:** Fully utilize our Firebase data to build a personalized dashboard charting a student's confidence scores and common language hurdles over time.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
-# Speak-Abroad
+## 👥 The Team
+Built by **Anthony Silva**, **Wade Owojori**, and **Kausar Moshood** *Oregon State University*
