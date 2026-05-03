@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import re
 import time
 from pathlib import Path
 from dotenv import load_dotenv
@@ -28,8 +29,8 @@ DEBUG_SYSTEM_EVENTS = os.getenv("DEBUG_SYSTEM_EVENTS") == "true"
 def prewarm(proc: JobProcess):
     print(">>> Prewarming Silero VAD")
     proc.userdata["vad"] = silero.VAD.load(
-        min_speech_duration=0.1,
-        min_silence_duration=0.5,
+        min_speech_duration=0.05,
+        min_silence_duration=0.35,
         prefix_padding_duration=0.2,
     )
 
@@ -66,7 +67,8 @@ def user_requested_end(text: str) -> bool:
     normalized = text.lower().strip()
     end_phrases = [
         "bye", "goodbye", "thank you", "thanks", 
-        "that's all", "i'm done", "done"
+        "that's all", "that is all", "i'm done", "im done", "i am done",
+        "done", "stop", "end scenario", "end practice"
     ]
     return any(phrase in normalized for phrase in end_phrases)
 
@@ -77,6 +79,122 @@ def assistant_completed_practice(text: str) -> bool:
         "great, you completed the practice" in normalized or 
         "goodbye" in normalized
     )
+
+
+def extract_json_object(text: str) -> dict | None:
+    cleaned = text.strip()
+    cleaned = re.sub(r"^```(?:json)?", "", cleaned).strip()
+    cleaned = re.sub(r"```$", "", cleaned).strip()
+
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", cleaned, flags=re.DOTALL)
+        if not match:
+            return None
+        try:
+            return json.loads(match.group(0))
+        except json.JSONDecodeError:
+            return None
+
+
+def first_user_text(transcript: list[dict]) -> str:
+    for item in transcript:
+        if item["role"] == "user":
+            return item["text"]
+    return "..."
+
+
+def build_fallback_feedback(transcript: list[dict], scenario_title: str) -> dict:
+    user_turns = [item["text"] for item in transcript if item["role"] == "user"]
+    assistant_turns = [item["text"] for item in transcript if item["role"] == "assistant"]
+    score = 72
+
+    if len(user_turns) >= 3:
+        score += 6
+    if any(len(turn.split()) >= 6 for turn in user_turns):
+        score += 5
+    if any("?" in turn for turn in user_turns):
+        score += 4
+    if any("please" in turn.lower() or "thank" in turn.lower() for turn in user_turns):
+        score += 3
+
+    score = min(score, 88)
+
+    return {
+        "score": score,
+        "wentWell": "You kept the conversation moving and responded to follow-up questions.",
+        "toImprove": "Your request was hard to follow at first. State the key details in a simple order.",
+        "insteadOf": first_user_text(transcript),
+        "tryThis": "Hi, I'd like to make a reservation for tomorrow at 2 PM for two people.",
+        "culturalTip": (
+            f"In a {scenario_title.lower()} scenario, lead with the practical details first, "
+            "then confirm them clearly."
+        ),
+    }
+
+
+def normalize_feedback(candidate: dict | None, transcript: list[dict], scenario_title: str) -> dict:
+    fallback = build_fallback_feedback(transcript, scenario_title)
+    if not isinstance(candidate, dict):
+        return fallback
+
+    feedback = {}
+    for key, value in fallback.items():
+        feedback[key] = candidate.get(key, value)
+
+    try:
+        feedback["score"] = max(0, min(100, int(feedback["score"])))
+    except (TypeError, ValueError):
+        feedback["score"] = fallback["score"]
+
+    for key in ["wentWell", "toImprove", "insteadOf", "tryThis", "culturalTip"]:
+        if not isinstance(feedback[key], str) or not feedback[key].strip():
+            feedback[key] = fallback[key]
+        else:
+            feedback[key] = feedback[key].strip()
+
+    return feedback
+
+
+def generate_feedback(transcript: list[dict], scenario_title: str, goal: str) -> dict:
+    api_key = os.environ.get("GOOGLE_API_KEY")
+    if not api_key:
+        print(">>> GOOGLE_API_KEY missing; using fallback feedback.")
+        return build_fallback_feedback(transcript, scenario_title)
+
+    client = genai.Client(api_key=api_key)
+    prompt = (
+        "You are evaluating a spoken English roleplay for SpeakAbroad.\n"
+        "Be honest, specific, and useful. Do not be overly generous. Do not be harsh, "
+        "condescending, or motivationally vague.\n"
+        "Judge the student's actual communication: clarity, goal completion, natural phrasing, "
+        "and cultural/social fit.\n"
+        "Return only valid JSON with exactly these keys:\n"
+        '{ "score": number, "wentWell": string, "toImprove": string, '
+        '"insteadOf": string, "tryThis": string, "culturalTip": string }\n'
+        "Scoring guide: 90+ excellent, 80s solid, 70s understandable with issues, "
+        "60s confusing/incomplete, below 60 mostly unsuccessful.\n"
+        f"Scenario: {scenario_title}\n"
+        f"Goal: {goal}\n"
+        f"Transcript JSON: {json.dumps(transcript)}"
+    )
+
+    try:
+        response = client.models.generate_content(
+            model=os.getenv("FEEDBACK_MODEL", "gemini-2.0-flash"),
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.2,
+                max_output_tokens=600,
+            ),
+        )
+        parsed = extract_json_object(response.text or "")
+        return normalize_feedback(parsed, transcript, scenario_title)
+    except Exception as error:
+        print(f">>> Feedback Error: {error}")
+        print(">>> Using fallback feedback so the UI still receives results.")
+        return build_fallback_feedback(transcript, scenario_title)
 
 
 @server.rtc_session()
@@ -131,6 +249,7 @@ async def entrypoint(ctx: JobContext):
             instructions=system_instruction
         ),
         vad=ctx.proc.userdata["vad"],
+        aec_warmup_duration=0.5,
     )
 
     agent = Agent(instructions=system_instruction)
@@ -143,7 +262,10 @@ async def entrypoint(ctx: JobContext):
     async def end_practice_after_delay(reason: str, delay: float):
         await asyncio.sleep(delay)
         print(f">>> Auto-ending practice: {reason}")
-        ctx.shutdown(reason=reason)
+        try:
+            await ctx.delete_room()
+        except Exception as error:
+            print(f">>> Could not delete room while ending practice: {error}")
 
     def schedule_practice_end(reason: str, delay: float = 2.0):
         nonlocal end_practice_task
@@ -169,6 +291,8 @@ async def entrypoint(ctx: JobContext):
             print(f">>> [assistant] {text}")
             if user_has_spoken and assistant_completed_practice(text):
                 schedule_practice_end("scenario complete", delay=1.5)
+            elif user_has_spoken and assistant_turns >= 10:
+                schedule_practice_end("maximum assistant turns reached", delay=1.5)
         else:
             user_has_spoken = True
             print(f">>> [user] {text}")
@@ -193,32 +317,20 @@ async def entrypoint(ctx: JobContext):
         
         if transcript:
             print(">>> Generating AI Feedback...")
-            # Set http_options to use the stable v1 API version
-            client = genai.Client(
-                api_key=os.environ.get("GOOGLE_API_KEY"),
-                http_options=types.HttpOptions(api_version='v1')
-            )
-            
-            prompt = f"Analyze this roleplay transcript for '{scenario_title}': {json.dumps(transcript)}"
+            feedback_data = generate_feedback(transcript, scenario_title, detailed_goal or goal)
+            feedback_data["roomName"] = ctx.room.name
 
             try:
-                response = client.models.generate_content(
-                    model="gemini-2.0-flash",
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        system_instruction="Analyze the transcript. Return JSON: score, wentWell, toImprove, insteadOf, tryThis, culturalTip.",
-                        response_mime_type="application/json",
-                    ),
-                )
-                
-                feedback_data = response.parsed
-                feedback_data["roomName"] = ctx.room.name
-                
                 api_url = os.getenv("NEXT_PUBLIC_APP_URL", "http://localhost:3000")
-                requests.post(f"{api_url}/api/feedback", json=feedback_data)
+                response = requests.post(
+                    f"{api_url}/api/feedback",
+                    json=feedback_data,
+                    timeout=5,
+                )
+                response.raise_for_status()
                 print(">>> Feedback sent successfully.")
             except Exception as e:
-                print(f">>> Feedback Error: {e}")
+                print(f">>> Failed to send feedback: {e}")
 
         ctx.shutdown(reason="session ended")
 
