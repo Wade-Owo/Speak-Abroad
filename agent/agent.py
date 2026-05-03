@@ -219,7 +219,7 @@ async def entrypoint(ctx: JobContext):
             user_has_spoken = True
             print(f">>> [user] {text}")
             if user_requested_end(text):
-                schedule_practice_end("user requested ending", delay=1.0)
+                schedule_practice_end("user requested ending", delay=0.1)
 
         if DEBUG_SYSTEM_EVENTS:
             print(f">>> SYSTEM EVENT: {type(item).__name__}")
