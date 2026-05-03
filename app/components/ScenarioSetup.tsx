@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import type { Scenario } from "../data/scenarios";
+import { CoachModal } from "./CoachModal";
 import { OptionButton } from "./OptionButton";
 
 const pressureOptions = ["Calm", "Normal", "High Pressure"];
@@ -92,26 +93,12 @@ export function ScenarioSetup({ scenario }: { scenario: Scenario }) {
       </section>
 
       {isStarting ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-blue-950/40 p-5 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl bg-white p-7 text-center shadow-2xl">
-            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-blue-50 text-blue-600">
-              <span className="h-3 w-3 animate-ping rounded-full bg-blue-600" />
-            </div>
-            <h2 className="mt-5 text-2xl font-bold text-blue-950">
-              AI Coach Starting...
-            </h2>
-            <p className="mt-3 leading-7 text-slate-500">
-              This is where the live voice roleplay will begin.
-            </p>
-            <button
-              type="button"
-              onClick={() => setIsStarting(false)}
-              className="mt-6 rounded-full border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-            >
-              Close
-            </button>
-          </div>
-        </div>
+        <CoachModal
+          scenario={scenario}
+          pressure={pressure}
+          personality={personality}
+          onClose={() => setIsStarting(false)}
+        />
       ) : null}
     </>
   );
