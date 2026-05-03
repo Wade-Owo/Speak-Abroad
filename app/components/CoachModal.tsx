@@ -509,8 +509,8 @@ function LiveCoachContent({
       speakerStatus={speakerStatus}
       aiSpeaking={aiSpeaking}
       onClose={onClose}
-      onEnd={() => {
-        room.disconnect();
+      onEnd={async () => {
+        await room.disconnect();
         onEnd();
       }}
       onToggleMuted={() => {

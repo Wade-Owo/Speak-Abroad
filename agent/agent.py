@@ -156,45 +156,54 @@ def normalize_feedback(candidate: dict | None, transcript: list[dict], scenario_
 
     return feedback
 
-
 def generate_feedback(transcript: list[dict], scenario_title: str, goal: str) -> dict:
     api_key = os.environ.get("GOOGLE_API_KEY")
     if not api_key:
         print(">>> GOOGLE_API_KEY missing; using fallback feedback.")
         return build_fallback_feedback(transcript, scenario_title)
 
-    client = genai.Client(api_key=api_key)
+    # You can explicitly force the stable v1 API version if v1beta continues to cause issues
+    client = genai.Client(
+        api_key=api_key,
+        http_options=types.HttpOptions(api_version='v1') 
+    )
+    
     prompt = (
         "You are evaluating a spoken English roleplay for SpeakAbroad.\n"
-        "Be honest, specific, and useful. Do not be overly generous. Do not be harsh, "
-        "condescending, or motivationally vague.\n"
-        "Judge the student's actual communication: clarity, goal completion, natural phrasing, "
-        "and cultural/social fit.\n"
         "Return only valid JSON with exactly these keys:\n"
         '{ "score": number, "wentWell": string, "toImprove": string, '
         '"insteadOf": string, "tryThis": string, "culturalTip": string }\n'
-        "Scoring guide: 90+ excellent, 80s solid, 70s understandable with issues, "
-        "60s confusing/incomplete, below 60 mostly unsuccessful.\n"
         f"Scenario: {scenario_title}\n"
         f"Goal: {goal}\n"
         f"Transcript JSON: {json.dumps(transcript)}"
     )
 
-    try:
-        response = client.models.generate_content(
-            model=os.getenv("FEEDBACK_MODEL", "gemini-2.0-flash"),
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                temperature=0.2,
-                max_output_tokens=600,
-            ),
-        )
-        parsed = extract_json_object(response.text or "")
-        return normalize_feedback(parsed, transcript, scenario_title)
-    except Exception as error:
-        print(f">>> Feedback Error: {error}")
-        print(">>> Using fallback feedback so the UI still receives results.")
-        return build_fallback_feedback(transcript, scenario_title)
+    # USE THE MODEL SPECIFIED IN YOUR PROJECT DOCS
+    model_name = os.getenv("FEEDBACK_MODEL", "gemini-2.5-flash")
+
+    for attempt in range(3):
+        try:
+            print(f">>> Generating AI Feedback with {model_name} (Attempt {attempt + 1})...")
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.2,
+                    max_output_tokens=600,
+                ),
+            )
+            parsed = extract_json_object(response.text or "")
+            return normalize_feedback(parsed, transcript, scenario_title)
+            
+        except Exception as error:
+            if "429" in str(error) and attempt < 2:
+                print(f">>> Quota hit. Retrying in 8 seconds... (Attempt {attempt + 1}/3)")
+                time.sleep(8)
+                continue
+                
+            print(f">>> Feedback Error: {error}")
+            print(">>> Using fallback feedback so the UI still receives results.")
+            return build_fallback_feedback(transcript, scenario_title)
 
 
 @server.rtc_session()
@@ -262,10 +271,9 @@ async def entrypoint(ctx: JobContext):
     async def end_practice_after_delay(reason: str, delay: float):
         await asyncio.sleep(delay)
         print(f">>> Auto-ending practice: {reason}")
-        try:
-            await ctx.delete_room()
-        except Exception as error:
-            print(f">>> Could not delete room while ending practice: {error}")
+        # REMOVE: await ctx.delete_room() 
+        # Using shutdown avoids the WebRTC ParseIntError panic on Windows
+        ctx.shutdown(reason=reason)
 
     def schedule_practice_end(reason: str, delay: float = 2.0):
         nonlocal end_practice_task
