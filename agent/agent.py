@@ -335,7 +335,7 @@ async def entrypoint(ctx: JobContext):
                 response = requests.post(
                     f"{api_url}/api/feedback",
                     json=feedback_data,
-                    timeout=5,
+                    timeout=15,
                 )
                 response.raise_for_status()
                 print(">>> Feedback sent successfully.")
