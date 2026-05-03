@@ -9,7 +9,9 @@ npm run dev
 
 ## Run Backend
 Open new terminal
+
 cd agent
+
 python agent.py dev
 
 ```

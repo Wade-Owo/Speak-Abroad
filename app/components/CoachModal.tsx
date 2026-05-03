@@ -13,6 +13,7 @@ import { ConnectionState } from "livekit-client";
 import type { Scenario } from "../data/scenarios";
 
 export type CoachModalState =
+  | "briefing"
   | "loading"
   | "live"
   | "processing"
@@ -65,13 +66,19 @@ function starterCue(starter: Scenario["conversationStarter"]) {
     : "Start by speaking first.";
 }
 
+function starterExplanation(starter: Scenario["conversationStarter"]) {
+  return starter === "ai"
+    ? "Wait for the AI coach to begin the conversation."
+    : "Start the conversation by speaking first.";
+}
+
 export function CoachModal({
   scenario,
   pressure,
   personality,
   onClose,
 }: CoachModalProps) {
-  const [modalState, setModalState] = useState<CoachModalState>("loading");
+  const [modalState, setModalState] = useState<CoachModalState>("briefing");
   const [token, setToken] = useState<string>();
   const [serverUrl, setServerUrl] = useState<string>();
   const [errorMessage, setErrorMessage] = useState<string>();
@@ -156,6 +163,16 @@ export function CoachModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-blue-950/45 p-4 backdrop-blur-sm">
+      {modalState === "briefing" ? (
+        <BriefingCard
+          scenario={scenario}
+          pressure={pressure}
+          personality={personality}
+          onBegin={() => setModalState("loading")}
+          onClose={onClose}
+        />
+      ) : null}
+
       {modalState === "loading" ? (
         <LoadingCard scenario={scenario} onClose={onClose} />
       ) : null}
@@ -219,6 +236,112 @@ export function CoachModal({
         />
       ) : null}
     </div>
+  );
+}
+
+function BriefingCard({
+  scenario,
+  pressure,
+  personality,
+  onBegin,
+  onClose,
+}: CoachModalProps & { onBegin: () => void }) {
+  const role = roleLabels[scenario.iconName].toLowerCase();
+
+  return (
+    <section className="relative max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl sm:p-8">
+      <FloatingCloseButton onClose={onClose} label="Close briefing modal" />
+
+      <div className="pr-10">
+        <p className="text-xs font-bold uppercase tracking-[0.18em] text-blue-600">
+          Before You Start
+        </p>
+        <h2 className="mt-2 text-3xl font-black tracking-tight text-blue-950">
+          {scenario.title}
+        </h2>
+      </div>
+
+      <div className="mt-6 grid gap-4 sm:grid-cols-2">
+        <section className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
+          <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
+            Scenario
+          </p>
+          <p className="mt-3 leading-7 text-slate-700">
+            {scenario.description}
+          </p>
+        </section>
+
+        <section className="rounded-3xl border border-blue-100 bg-blue-50 p-5">
+          <p className="text-xs font-bold uppercase tracking-[0.14em] text-blue-600">
+            Conversation Starter
+          </p>
+          <span className="mt-3 inline-flex rounded-full bg-white px-3 py-1.5 text-sm font-bold text-blue-700 ring-1 ring-blue-100">
+            {starterLabel(scenario.conversationStarter)}
+          </span>
+          <p className="mt-3 leading-7 text-slate-700">
+            {starterExplanation(scenario.conversationStarter)}
+          </p>
+        </section>
+
+        <section className="rounded-3xl border border-blue-100 bg-white p-5 shadow-sm sm:col-span-2">
+          <p className="text-xs font-bold uppercase tracking-[0.14em] text-blue-600">
+            Your Goal
+          </p>
+          <p className="mt-3 text-lg font-bold leading-8 text-blue-950">
+            {scenario.detailedGoal}
+          </p>
+        </section>
+
+        <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:col-span-2">
+          <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
+            Success Checklist
+          </p>
+          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            {scenario.successCriteria.map((criterion) => (
+              <div
+                key={criterion}
+                className="flex items-start gap-3 rounded-2xl bg-slate-50 p-4"
+              >
+                <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white">
+                  <CheckIcon />
+                </span>
+                <p className="text-sm font-semibold leading-6 text-slate-700">
+                  {criterion}
+                </p>
+              </div>
+            ))}
+          </div>
+        </section>
+      </div>
+
+      <div className="mt-6 flex flex-col gap-4 border-t border-slate-200 pt-5 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap gap-2">
+          <span className="rounded-full bg-blue-50 px-3 py-1.5 text-xs font-bold text-blue-700 ring-1 ring-blue-100">
+            {pressure} pressure
+          </span>
+          <span className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-600 ring-1 ring-slate-200">
+            {personality} {role}
+          </span>
+        </div>
+
+        <div className="flex flex-col-reverse gap-3 sm:flex-row">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full border border-slate-200 px-5 py-3 text-sm font-bold text-slate-600 transition hover:bg-slate-50"
+          >
+            Back to Scenario
+          </button>
+          <button
+            type="button"
+            onClick={onBegin}
+            className="rounded-full bg-blue-600 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-blue-600/20 transition hover:bg-blue-700"
+          >
+            Begin Practice
+          </button>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -868,6 +991,23 @@ function WarningIcon() {
       <path d="M12 9v4" />
       <path d="M12 17h.01" />
       <path d="M10.3 3.9 2.5 18a2 2 0 0 0 1.7 3h15.6a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
+    </svg>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="h-3.5 w-3.5"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="3"
+      viewBox="0 0 24 24"
+    >
+      <path d="m20 6-11 11-5-5" />
     </svg>
   );
 }
