@@ -214,6 +214,7 @@ async def entrypoint(ctx: JobContext):
     print(f">>> Participant connected: {participant.identity}")
 
     settings = json.loads(participant.metadata or "{}")
+    user_id = settings.get("userId", "anonymous")
     pressure = settings.get("pressure", "Normal")
     personality = settings.get("personality", "Friendly")
     scenario_title = settings.get("scenarioTitle", "Real-life conversation")
@@ -327,6 +328,7 @@ async def entrypoint(ctx: JobContext):
             print(">>> Generating AI Feedback...")
             feedback_data = generate_feedback(transcript, scenario_title, detailed_goal or goal)
             feedback_data["roomName"] = ctx.room.name
+            feedback_data["userId"] = user_id
 
             try:
                 api_url = os.getenv("NEXT_PUBLIC_APP_URL", "http://localhost:3000")

@@ -18,6 +18,7 @@ export async function GET(req: NextRequest) {
   const scenarioId = searchParams.get("scenarioId") || searchParams.get("room");
   const pressure = searchParams.get("pressure") || "Normal";
   const personality = searchParams.get("personality") || "Friendly";
+  const userId = searchParams.get("userId") || "anonymous";
   const participantName = `student-${Math.floor(Math.random() * 1000)}`;
 
   if (!scenarioId) {
@@ -56,6 +57,7 @@ export async function GET(req: NextRequest) {
     conversationStarter: scenario.conversationStarter,
     pressure,
     personality,
+    userId,
   };
 
   const at = new AccessToken(apiKey, apiSecret, {

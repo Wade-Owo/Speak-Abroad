@@ -11,6 +11,7 @@ import {
 import { useEffect, useState } from "react";
 import { ConnectionState } from "livekit-client";
 import type { Scenario } from "../data/scenarios";
+import { useAuth } from "../context/AuthContext";
 
 export type CoachModalState =
   | "briefing"
@@ -114,6 +115,8 @@ export function CoachModal({
   const [isMockMode, setIsMockMode] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
 
+  const { user } = useAuth();
+
   // 1. Connection Logic: Fetch token and room name
   useEffect(() => {
     if (modalState !== "loading" || isMockMode) return;
@@ -132,6 +135,7 @@ export function CoachModal({
           scenarioId: scenario.id,
           pressure,
           personality,
+          ...(user?.uid ? { userId: user.uid } : {})
         });
         const response = await fetch(`/api/livekit?${params.toString()}`, {
           signal: controller.signal,
