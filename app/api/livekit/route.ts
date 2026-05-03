@@ -50,6 +50,8 @@ export async function GET(req: NextRequest) {
     scenarioTitle: scenario.title,
     scenarioDescription: scenario.description,
     goal: scenario.goal,
+    detailedGoal: scenario.detailedGoal,
+    successCriteria: scenario.successCriteria,
     role: roleLabels[scenario.iconName],
     conversationStarter: scenario.conversationStarter,
     pressure,
