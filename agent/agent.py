@@ -4,7 +4,6 @@ import os
 import time
 from pathlib import Path
 from dotenv import load_dotenv
-from livekit import api
 from livekit.agents import (
     Agent,
     AgentSession,
@@ -12,15 +11,8 @@ from livekit.agents import (
     JobContext,
     JobProcess,
     cli,
-    function_tool,
-    get_job_context,
 )
 from livekit.plugins import google, silero
-
-try:
-    from livekit.agents.beta.tools import EndCallTool
-except ImportError:
-    EndCallTool = None
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parents[1] / ".env.local")
 
@@ -74,44 +66,31 @@ def normalize_role(role: str) -> str | None:
     return None
 
 
-def create_end_call_tools(session: AgentSession):
-    extra_description = (
-        "Use this tool when the roleplay is complete, when the user says goodbye, "
-        "or when the scenario goal has been satisfied. Do not call it immediately "
-        "after the opening line. Do not call it before the user has responded at "
-        "least once unless the user explicitly asks to stop."
+def user_requested_end(text: str) -> bool:
+    normalized = text.lower().strip()
+    end_phrases = [
+        "bye",
+        "goodbye",
+        "thank you",
+        "thanks",
+        "that's all",
+        "that is all",
+        "i'm done",
+        "im done",
+        "i am done",
+        "done",
+    ]
+    return any(phrase in normalized for phrase in end_phrases)
+
+
+def assistant_completed_practice(text: str) -> bool:
+    normalized = text.lower().strip()
+    return (
+        "great, you completed the practice" in normalized
+        or "you can end the scenario now" in normalized
+        or "goodbye" in normalized
     )
-    end_instructions = (
-        "Briefly say the practice is complete and goodbye in one short sentence."
-    )
 
-    if EndCallTool is not None:
-        return EndCallTool(
-            delete_room=True,
-            extra_description=extra_description,
-            end_instructions=end_instructions,
-        ).tools
-
-    @function_tool(
-        name="end_practice",
-        description=extra_description,
-    )
-    async def end_practice() -> str:
-        """End the current LiveKit practice room."""
-        job_ctx = get_job_context(required=False)
-        if job_ctx is None:
-            return "No active LiveKit job context."
-
-        wait_for_inactive = getattr(session, "wait_for_inactive", None)
-        if wait_for_inactive is not None:
-            await wait_for_inactive()
-
-        await job_ctx.api.room.delete_room(
-            api.DeleteRoomRequest(room=job_ctx.room.name)
-        )
-        return "Practice ended."
-
-    return [end_practice]
 
 @server.rtc_session()
 async def entrypoint(ctx: JobContext):
@@ -142,7 +121,6 @@ async def entrypoint(ctx: JobContext):
 
     if conversation_starter == "ai" and role.lower() == "cashier":
         opening_line = 'Start immediately by saying: "Hi! Welcome in. What are you looking for today?"'
-    end_call_tool_name = "end_call" if EndCallTool is not None else "end_practice"
 
     print(
         ">>> Scenario metadata loaded: "
@@ -167,11 +145,10 @@ async def entrypoint(ctx: JobContext):
         "- If the student is unclear, ask a simple clarification.\n"
         "- If pressure is High Pressure, sound slightly rushed but not rude.\n"
         "- If personality is Impatient, be brief and direct but still appropriate.\n"
-        f"- If the user clearly says bye, goodbye, thanks, thank you, that’s all, I’m done, or similar, call the {end_call_tool_name} tool after a short goodbye.\n"
-        f"- If the scenario goal is completed, call the {end_call_tool_name} tool after a short closing line.\n"
-        "- If you reach 10 assistant turns, guide the user to finish and then end the call.\n"
+        "- If the user clearly says bye, goodbye, thanks, thank you, that’s all, I’m done, or similar, say one short goodbye.\n"
+        "- If the scenario goal is completed, say the exact completion line below.\n"
+        "- If you reach 10 assistant turns, guide the user to finish with one short closing line.\n"
         "- Never leave the user waiting after the scenario is complete.\n"
-        f"- Do not call {end_call_tool_name} before the user has responded at least once, unless the user explicitly asks to stop.\n"
         "- When complete, say exactly: “Great, you completed the practice. Goodbye.”"
     )
 
@@ -186,15 +163,33 @@ async def entrypoint(ctx: JobContext):
 
     agent = Agent(
         instructions=system_instruction,
-        tools=create_end_call_tools(session),
     )
 
     transcript = []
     assistant_turns = 0
+    user_has_spoken = False
+    end_practice_task = None
+
+    async def end_practice_after_delay(reason: str, delay: float):
+        await asyncio.sleep(delay)
+        print(f">>> Auto-ending practice: {reason}")
+        try:
+            await ctx.delete_room()
+        except Exception as error:
+            print(f">>> Could not delete room while ending practice: {error}")
+        ctx.shutdown(reason=reason)
+
+    def schedule_practice_end(reason: str, delay: float = 2.0):
+        nonlocal end_practice_task
+        if end_practice_task is not None and not end_practice_task.done():
+            return
+        end_practice_task = asyncio.create_task(
+            end_practice_after_delay(reason, delay)
+        )
 
     @session.on("conversation_item_added")
     def on_item_added(event):
-        nonlocal assistant_turns
+        nonlocal assistant_turns, user_has_spoken
 
         item = event.item
         item_role = getattr(item, "role", "unknown")
@@ -215,8 +210,15 @@ async def entrypoint(ctx: JobContext):
         if role_name == "assistant":
             assistant_turns += 1
             print(f">>> [assistant] {text} (turn {assistant_turns})")
+            if user_has_spoken and assistant_completed_practice(text):
+                schedule_practice_end("scenario complete", delay=1.5)
+            elif user_has_spoken and assistant_turns >= 10:
+                schedule_practice_end("maximum assistant turns reached", delay=2.0)
         else:
+            user_has_spoken = True
             print(f">>> [user] {text}")
+            if user_requested_end(text):
+                schedule_practice_end("user requested ending", delay=1.0)
 
         if DEBUG_SYSTEM_EVENTS:
             print(f">>> SYSTEM EVENT: {type(item).__name__}")
@@ -238,6 +240,9 @@ async def entrypoint(ctx: JobContext):
     except asyncio.CancelledError:
         pass
     finally:
+        if end_practice_task is not None and not end_practice_task.done():
+            end_practice_task.cancel()
+
         flush_delay = 3 if os.getenv("DEBUG_TRANSCRIPT_FLUSH") == "true" else 0.5
         await asyncio.sleep(flush_delay)
         
