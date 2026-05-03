@@ -44,7 +44,7 @@ export default function Home() {
 
         <div className="mt-8 flex flex-col items-center">
           <Link
-            href="/home"
+            href="/login"
             className="rounded-full bg-blue-600 px-8 py-4 text-base font-bold text-white shadow-xl shadow-blue-600/25 transition hover:-translate-y-0.5 hover:bg-blue-700"
           >
             Get Started
