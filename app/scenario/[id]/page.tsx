@@ -3,6 +3,7 @@ import { FeedbackItem } from "../../components/FeedbackItem";
 import { Navbar } from "../../components/Navbar";
 import { ScenarioSetup } from "../../components/ScenarioSetup";
 import { getScenarioById, scenarios } from "../../data/scenarios";
+import { FeedbackSection } from "./FeedbackSection";
 
 export function generateStaticParams() {
   return scenarios.map((scenario) => ({ id: scenario.id }));
@@ -67,29 +68,8 @@ export default async function ScenarioPage({
             </ul>
           </section>
 
-          <section>
-            <h2 className="text-xl font-bold text-blue-950">
-              After the conversation, you&apos;ll get feedback on:
-            </h2>
-            <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
-              <FeedbackItem
-                title="Clarity"
-                description="Whether your questions and answers were easy to understand."
-              />
-              <FeedbackItem
-                title="Confidence"
-                description="How steady, direct, and prepared you sounded."
-              />
-              <FeedbackItem
-                title="Natural phrasing"
-                description="More fluent ways to express the same idea."
-              />
-              <FeedbackItem
-                title="Cultural fit"
-                description="Tone and social expectations for the situation."
-              />
-            </div>
-          </section>
+          {/* This section is now dynamic */}
+          <FeedbackSection scenarioId={id} />
         </aside>
       </main>
     </div>
