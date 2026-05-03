@@ -1,8 +1,8 @@
+// app/context/AuthContext.tsx
 "use client";
 
-import { createContext, useContext, useEffect, useState } from "react";
-import { User, onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut } from "firebase/auth";
-import { auth } from "../../firebase";
+import { createContext, useContext, useState } from "react";
+import { User } from "firebase/auth";
 
 type AuthContextType = {
   user: User | null;
@@ -13,28 +13,31 @@ type AuthContextType = {
 
 const AuthContext = createContext<AuthContextType>({} as AuthContextType);
 
+// --- DEV BYPASS ---
+// Fake user data so you can test the Dashboard and Navbar
+const MOCK_USER = {
+  uid: "hackathon-demo-user-123",
+  email: "student@university.edu",
+  displayName: "Demo Student"
+} as User;
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
+  // Instantly set the user to our fake MOCK_USER
+  const [user, setUser] = useState<User | null>(MOCK_USER);
+  const loading = false; // Never loading, instantly ready
 
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-      setLoading(false);
-    });
-    return () => unsubscribe();
-  }, []);
-
+  // Fake login/logout functions so the UI buttons don't crash
   const loginWithGoogle = async () => {
-    const provider = new GoogleAuthProvider();
-    await signInWithPopup(auth, provider);
+    setUser(MOCK_USER);
   };
 
-  const logout = () => signOut(auth);
+  const logout = async () => {
+    setUser(null);
+  };
 
   return (
     <AuthContext.Provider value={{ user, loading, loginWithGoogle, logout }}>
-      {!loading && children}
+      {children}
     </AuthContext.Provider>
   );
 }

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Navbar } from "../../components/Navbar";
+import Navbar from "../../components/Navbar";
 import { ScenarioSetup } from "../../components/ScenarioSetup";
 import { getScenarioById, scenarios } from "../../data/scenarios";
 import { FeedbackSection } from "./FeedbackSection";

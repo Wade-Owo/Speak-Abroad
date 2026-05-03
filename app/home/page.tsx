@@ -1,4 +1,4 @@
-import { Navbar } from "../components/Navbar";
+import Navbar from "../components/Navbar";
 import { ScenarioCard } from "../components/ScenarioCard";
 import { scenarios } from "../data/scenarios";
 
