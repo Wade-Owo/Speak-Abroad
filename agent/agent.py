@@ -13,6 +13,8 @@ from livekit.agents import (
     cli,
 )
 from livekit.plugins import google, silero
+from google import genai
+from google.genai import types
 import requests
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parents[1] / ".env.local")
@@ -26,8 +28,8 @@ DEBUG_SYSTEM_EVENTS = os.getenv("DEBUG_SYSTEM_EVENTS") == "true"
 def prewarm(proc: JobProcess):
     print(">>> Prewarming Silero VAD")
     proc.userdata["vad"] = silero.VAD.load(
-        min_speech_duration=0.05,
-        min_silence_duration=0.35,
+        min_speech_duration=0.1,
+        min_silence_duration=0.5,
         prefix_padding_duration=0.2,
     )
 
@@ -36,25 +38,18 @@ server = AgentServer(setup_fnc=prewarm)
 
 
 def extract_text(content) -> str:
-    if isinstance(content, str):
-        return content.strip()
-
+    """Extracts text from various content formats, including Gemini Realtime Parts."""
     if isinstance(content, list):
         parts = []
         for part in content:
-            if isinstance(part, str):
-                parts.append(part)
-            elif hasattr(part, "text") and part.text:
+            if hasattr(part, "text") and part.text:
                 parts.append(part.text)
-            elif hasattr(part, "text_content") and part.text_content:
-                parts.append(part.text_content)
+            elif isinstance(part, str):
+                parts.append(part)
         return " ".join(parts).strip()
 
-    if hasattr(content, "text") and content.text:
-        return content.text.strip()
-
-    if hasattr(content, "text_content") and content.text_content:
-        return content.text_content.strip()
+    if isinstance(content, str):
+        return content.strip()
 
     return ""
 
@@ -70,16 +65,8 @@ def normalize_role(role: str) -> str | None:
 def user_requested_end(text: str) -> bool:
     normalized = text.lower().strip()
     end_phrases = [
-        "bye",
-        "goodbye",
-        "thank you",
-        "thanks",
-        "that's all",
-        "that is all",
-        "i'm done",
-        "im done",
-        "i am done",
-        "done",
+        "bye", "goodbye", "thank you", "thanks", 
+        "that's all", "i'm done", "done"
     ]
     return any(phrase in normalized for phrase in end_phrases)
 
@@ -87,9 +74,8 @@ def user_requested_end(text: str) -> bool:
 def assistant_completed_practice(text: str) -> bool:
     normalized = text.lower().strip()
     return (
-        "great, you completed the practice" in normalized
-        or "you can end the scenario now" in normalized
-        or "goodbye" in normalized
+        "great, you completed the practice" in normalized or 
+        "goodbye" in normalized
     )
 
 
@@ -106,51 +92,36 @@ async def entrypoint(ctx: JobContext):
     scenario_title = settings.get("scenarioTitle", "Real-life conversation")
     scenario_description = settings.get("scenarioDescription", "")
     goal = settings.get("goal", "")
+    detailed_goal = settings.get("detailedGoal", "")
+    success_criteria = settings.get("successCriteria", [])
     role = settings.get("role", "conversation partner")
     conversation_starter = settings.get("conversationStarter", "ai")
+    
     if conversation_starter not in ["ai", "user"]:
         conversation_starter = "ai"
 
     if conversation_starter == "user":
-        opening_line = (
-            "The student must start this conversation. Do not speak first. "
-            "Wait silently for the student's first message. After the student "
-            "speaks, respond naturally as the role."
-        )
+        opening_line = "Wait silently for the student to speak first. Then respond naturally."
     else:
-        opening_line = "Start the conversation immediately with one natural opening line."
+        opening_line = "Start immediately with one natural opening line."
 
     if conversation_starter == "ai" and role.lower() == "cashier":
-        opening_line = 'Start immediately by saying: "Hi! Welcome in. What are you looking for today?"'
+        opening_line = 'Start by saying: "Hi! Welcome in. What are you looking for today?"'
 
-    print(
-        ">>> Scenario metadata loaded: "
-        f"scenario='{scenario_title}', role='{role}', pressure='{pressure}', "
-        f"personality='{personality}', conversationStarter='{conversation_starter}'"
-    )
+    print(f">>> Scenario loaded: {scenario_title} | Role: {role}")
 
     system_instruction = (
-        f"You are the {role} in a spoken roleplay scenario called '{scenario_title}'.\n"
-        f"Scenario description: {scenario_description}\n"
-        f"Student goal: {goal}\n"
-        f"Your personality: {personality}\n"
-        f"Pressure level: {pressure}\n"
-        f"Opening behavior: {opening_line}\n\n"
-        "Strict rules:\n"
-        "- Stay fully in character as the role.\n"
-        "- Keep every response short, natural, and realistic.\n"
-        "- Respond in one sentence unless clarification is necessary.\n"
-        "- Keep replies under 12 words when possible.\n"
+        f"You are the {role} in '{scenario_title}'.\n"
+        f"Description: {scenario_description}\n"
+        f"Detailed Goal: {detailed_goal}\n"
+        f"Success Criteria: {', '.join(success_criteria)}\n"
+        f"Personality: {personality} | Pressure: {pressure}\n"
+        f"Opening: {opening_line}\n\n"
+        "Rules:\n"
+        "- Stay in character. Keep responses under 12 words.\n"
         "- Ask only one question at a time.\n"
-        "- Do not coach, grade, explain, or correct during the roleplay.\n"
-        "- If the student is unclear, ask a simple clarification.\n"
-        "- If pressure is High Pressure, sound slightly rushed but not rude.\n"
-        "- If personality is Impatient, be brief and direct but still appropriate.\n"
-        "- If the user clearly says bye, goodbye, thanks, thank you, that’s all, I’m done, or similar, say one short goodbye.\n"
-        "- If the scenario goal is completed, say the exact completion line below.\n"
-        "- If you reach 10 assistant turns, guide the user to finish with one short closing line.\n"
-        "- Never leave the user waiting after the scenario is complete.\n"
-        "- When complete, say exactly: “Great, you completed the practice. Goodbye.”"
+        "- Do not coach or correct the user during roleplay.\n"
+        "- When finished, say exactly: 'Great, you completed the practice. Goodbye.'"
     )
 
     session = AgentSession(
@@ -162,9 +133,7 @@ async def entrypoint(ctx: JobContext):
         vad=ctx.proc.userdata["vad"],
     )
 
-    agent = Agent(
-        instructions=system_instruction,
-    )
+    agent = Agent(instructions=system_instruction)
 
     transcript = []
     assistant_turns = 0
@@ -174,66 +143,42 @@ async def entrypoint(ctx: JobContext):
     async def end_practice_after_delay(reason: str, delay: float):
         await asyncio.sleep(delay)
         print(f">>> Auto-ending practice: {reason}")
-        try:
-            await ctx.delete_room()
-        except Exception as error:
-            print(f">>> Could not delete room while ending practice: {error}")
         ctx.shutdown(reason=reason)
 
     def schedule_practice_end(reason: str, delay: float = 2.0):
         nonlocal end_practice_task
         if end_practice_task is not None and not end_practice_task.done():
             return
-        end_practice_task = asyncio.create_task(
-            end_practice_after_delay(reason, delay)
-        )
+        end_practice_task = asyncio.create_task(end_practice_after_delay(reason, delay))
 
     @session.on("conversation_item_added")
     def on_item_added(event):
         nonlocal assistant_turns, user_has_spoken
-
         item = event.item
-        item_role = getattr(item, "role", "unknown")
-        role_name = normalize_role(item_role)
+        role_name = normalize_role(getattr(item, "role", "unknown"))
 
-        if role_name is None:
-            if DEBUG_SYSTEM_EVENTS:
-                print(f">>> SYSTEM EVENT: {type(item).__name__}")
-            return
+        if role_name is None: return
 
         text = extract_text(getattr(item, "content", ""))
-
-        if not text:
-            return
+        if not text: return
 
         transcript.append({"role": role_name, "text": text})
 
         if role_name == "assistant":
             assistant_turns += 1
-            print(f">>> [assistant] {text} (turn {assistant_turns})")
+            print(f">>> [assistant] {text}")
             if user_has_spoken and assistant_completed_practice(text):
                 schedule_practice_end("scenario complete", delay=1.5)
-            elif user_has_spoken and assistant_turns >= 10:
-                schedule_practice_end("maximum assistant turns reached", delay=2.0)
         else:
             user_has_spoken = True
             print(f">>> [user] {text}")
             if user_requested_end(text):
                 schedule_practice_end("user requested ending", delay=0.1)
 
-        if DEBUG_SYSTEM_EVENTS:
-            print(f">>> SYSTEM EVENT: {type(item).__name__}")
-
-    session_start = time.perf_counter()
     await session.start(agent=agent, room=ctx.room)
-    print(f">>> Session started in {time.perf_counter() - session_start:.2f}s")
 
     if conversation_starter == "ai":
-        opening_start = time.perf_counter()
         await session.generate_reply()
-        print(f">>> Opening reply generated in {time.perf_counter() - opening_start:.2f}s")
-    else:
-        print(">>> Waiting for user to start the conversation")
 
     try:
         while participant.identity in ctx.room.remote_participants:
@@ -244,33 +189,38 @@ async def entrypoint(ctx: JobContext):
         if end_practice_task is not None and not end_practice_task.done():
             end_practice_task.cancel()
 
-        flush_delay = 3 if os.getenv("DEBUG_TRANSCRIPT_FLUSH") == "true" else 0.5
-        await asyncio.sleep(flush_delay)
+        await asyncio.sleep(0.5)
         
-        print("\n" + "="*50)
-        print("📜 FINAL SCENARIO TRANSCRIPT")
         if transcript:
-            # Analyze and Send Feedback
-            # In production, call an LLM here to generate these strings from the transcript
-            feedback_data = {
-                "roomName": ctx.room.name,
-                "score": 88, # Example score from analysis
-                "wentWell": "You clearly stated your goal at the start.",
-                "toImprove": "Try using more polite fillers like 'Um' or 'Excuse me'.",
-                "insteadOf": transcript[1]['text'] if len(transcript) > 1 else "...",
-                "tryThis": "Could you please help me with...",
-                "culturalTip": "In this setting, directness is valued but formal greetings are expected."
-            }
+            print(">>> Generating AI Feedback...")
+            # Set http_options to use the stable v1 API version
+            client = genai.Client(
+                api_key=os.environ.get("GOOGLE_API_KEY"),
+                http_options=types.HttpOptions(api_version='v1')
+            )
+            
+            prompt = f"Analyze this roleplay transcript for '{scenario_title}': {json.dumps(transcript)}"
 
             try:
-                # Send to the Next.js API
+                response = client.models.generate_content(
+                    model="gemini-2.0-flash",
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction="Analyze the transcript. Return JSON: score, wentWell, toImprove, insteadOf, tryThis, culturalTip.",
+                        response_mime_type="application/json",
+                    ),
+                )
+                
+                feedback_data = response.parsed
+                feedback_data["roomName"] = ctx.room.name
+                
                 api_url = os.getenv("NEXT_PUBLIC_APP_URL", "http://localhost:3000")
                 requests.post(f"{api_url}/api/feedback", json=feedback_data)
+                print(">>> Feedback sent successfully.")
             except Exception as e:
-                print(f">>> Failed to send feedback: {e}")
+                print(f">>> Feedback Error: {e}")
 
-        print(json.dumps(transcript, indent=2))
-        print("="*50 + "\n")
+        ctx.shutdown(reason="session ended")
 
 if __name__ == "__main__":
     cli.run_app(server)
