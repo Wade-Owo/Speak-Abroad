@@ -30,7 +30,7 @@ def prewarm(proc: JobProcess):
     print(">>> Prewarming Silero VAD")
     proc.userdata["vad"] = silero.VAD.load(
         min_speech_duration=0.05,
-        min_silence_duration=0.35,
+        min_silence_duration=0.30,
         prefix_padding_duration=0.2,
     )
 
