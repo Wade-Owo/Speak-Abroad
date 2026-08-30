@@ -48,3 +48,5 @@ SpeakAbroad helps that growth happen safely. Before each roleplay, the app expla
 
 ## The Team
 Built by **Anthony Silva**, **Wade Owojori**, and **Kausar Moshood** *Oregon State University*
+
+https://judge.beaverhacks.org/cmlfqho300000kv04wi9199a5/projects/cmoq4pbvv00jdkz047o9nd9uf
